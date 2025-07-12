@@ -1,0 +1,35 @@
+.App {
+  min-height: 100vh;
+  background-color: #f5f5f5;
+}
+
+/* 自定义样式 */
+.ant-layout-header {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.ant-table-thead > tr > th {
+  background-color: #fafafa;
+  font-weight: 600;
+}
+
+.ant-btn-primary {
+  background-color: #1890ff;
+  border-color: #1890ff;
+}
+
+.ant-btn-primary:hover {
+  background-color: #40a9ff;
+  border-color: #40a9ff;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .ant-layout-header {
+    padding: 0 16px;
+  }
+
+  .ant-layout-content {
+    padding: 16px;
+  }
+}
