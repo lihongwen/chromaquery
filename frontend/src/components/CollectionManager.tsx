@@ -13,6 +13,11 @@ import {
   Typography,
   Tag,
   Tooltip,
+  Descriptions,
+  Tabs,
+  List,
+  Empty,
+  Spin,
 } from 'antd';
 import {
   PlusOutlined,
@@ -20,11 +25,16 @@ import {
   EditOutlined,
   ReloadOutlined,
   DatabaseOutlined,
+  EyeOutlined,
+  FileTextOutlined,
+  InfoCircleOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 
 const { Header, Content } = Layout;
-const { Title } = Typography;
+const { Title, Text, Paragraph } = Typography;
+const { TabPane } = Tabs;
 
 // API基础URL
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -35,6 +45,25 @@ interface CollectionInfo {
   display_name: string;
   count: number;
   metadata: Record<string, any>;
+}
+
+// 文档信息接口
+interface DocumentInfo {
+  id: string;
+  document?: string;
+  metadata?: Record<string, any>;
+  embedding?: number[];
+}
+
+// 集合详细信息接口
+interface CollectionDetail {
+  name: string;
+  display_name: string;
+  count: number;
+  metadata: Record<string, any>;
+  created_time?: string;
+  documents: DocumentInfo[];
+  sample_documents: DocumentInfo[];
 }
 
 // 创建集合请求接口
@@ -54,7 +83,10 @@ const CollectionManager: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState<CollectionInfo | null>(null);
+  const [collectionDetail, setCollectionDetail] = useState<CollectionDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [createForm] = Form.useForm();
   const [renameForm] = Form.useForm();
 
@@ -69,6 +101,24 @@ const CollectionManager: React.FC = () => {
       message.error('获取集合列表失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 获取集合详细信息
+  const fetchCollectionDetail = async (collection: CollectionInfo) => {
+    setDetailLoading(true);
+    try {
+      const response = await axios.get(
+        `${API_BASE_URL}/collections/${encodeURIComponent(collection.display_name)}/detail?limit=20`
+      );
+      setCollectionDetail(response.data);
+      setDetailModalVisible(true);
+    } catch (error: any) {
+      console.error('获取集合详细信息失败:', error);
+      const errorMessage = error.response?.data?.detail || '获取集合详细信息失败';
+      message.error(errorMessage);
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -180,6 +230,14 @@ const CollectionManager: React.FC = () => {
         <Space>
           <Button
             type="link"
+            icon={<EyeOutlined />}
+            onClick={() => fetchCollectionDetail(record)}
+            loading={detailLoading && selectedCollection?.name === record.name}
+          >
+            查看
+          </Button>
+          <Button
+            type="link"
             icon={<EditOutlined />}
             onClick={() => openRenameModal(record)}
           >
@@ -206,14 +264,14 @@ const CollectionManager: React.FC = () => {
   ];
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ background: '#fff', padding: '0 24px', borderBottom: '1px solid #f0f0f0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Title level={3} style={{ margin: 0, color: '#1890ff' }}>
+    <Layout>
+      <Header>
+        <div className="header-title">
+          <Title level={3}>
             <DatabaseOutlined style={{ marginRight: 8 }} />
             ChromaDB 集合管理器
           </Title>
-          <Space>
+          <div className="header-actions">
             <Button
               icon={<ReloadOutlined />}
               onClick={fetchCollections}
@@ -228,21 +286,24 @@ const CollectionManager: React.FC = () => {
             >
               创建集合
             </Button>
-          </Space>
+          </div>
         </div>
       </Header>
 
-      <Content style={{ padding: '24px' }}>
+      <Content>
         <Card>
           <Table
             columns={columns}
             dataSource={collections}
             rowKey="name"
             loading={loading}
+            scroll={{ y: 'calc(100vh - 280px)' }}
             pagination={{
               showSizeChanger: true,
               showQuickJumper: true,
               showTotal: (total) => `共 ${total} 个集合`,
+              pageSize: 20,
+              showLessItems: true,
             }}
             locale={{
               emptyText: '暂无集合数据',
@@ -335,6 +396,147 @@ const CollectionManager: React.FC = () => {
             </Space>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 集合详情模态框 */}
+      <Modal
+        title={
+          <Space>
+            <DatabaseOutlined />
+            集合详情 - {collectionDetail?.display_name}
+          </Space>
+        }
+        open={detailModalVisible}
+        onCancel={() => {
+          setDetailModalVisible(false);
+          setCollectionDetail(null);
+        }}
+        footer={[
+          <Button key="close" onClick={() => {
+            setDetailModalVisible(false);
+            setCollectionDetail(null);
+          }}>
+            关闭
+          </Button>
+        ]}
+        width={800}
+        style={{ top: 20 }}
+      >
+        {collectionDetail ? (
+          <Tabs defaultActiveKey="basic">
+            <TabPane tab={
+              <span>
+                <InfoCircleOutlined />
+                基本信息
+              </span>
+            } key="basic">
+              <Descriptions column={2} bordered>
+                <Descriptions.Item label="集合名称" span={2}>
+                  <Text strong>{collectionDetail.display_name}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="内部名称">
+                  <Text code>{collectionDetail.name}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="文档数量">
+                  <Tag color={collectionDetail.count > 0 ? 'blue' : 'default'}>
+                    {collectionDetail.count} 个文档
+                  </Tag>
+                </Descriptions.Item>
+                {collectionDetail.created_time && (
+                  <Descriptions.Item label="创建时间" span={2}>
+                    <Space>
+                      <CalendarOutlined />
+                      {collectionDetail.created_time}
+                    </Space>
+                  </Descriptions.Item>
+                )}
+                <Descriptions.Item label="元数据" span={2}>
+                  {Object.keys(collectionDetail.metadata).length > 0 ? (
+                    <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                      <pre style={{ margin: 0, fontSize: '12px' }}>
+                        {JSON.stringify(collectionDetail.metadata, null, 2)}
+                      </pre>
+                    </div>
+                  ) : (
+                    <Text type="secondary">无元数据</Text>
+                  )}
+                </Descriptions.Item>
+              </Descriptions>
+            </TabPane>
+
+            <TabPane tab={
+              <span>
+                <FileTextOutlined />
+                文档内容 ({collectionDetail.count > 0 ?
+                  (collectionDetail.documents.length > 0 ?
+                    `全部 ${collectionDetail.documents.length}` :
+                    `样本 ${collectionDetail.sample_documents.length}`) :
+                  '0'})
+              </span>
+            } key="documents">
+              {collectionDetail.count === 0 ? (
+                <Empty description="该集合暂无文档" />
+              ) : (
+                <div>
+                  {collectionDetail.count > 100 && (
+                    <div style={{ marginBottom: 16, padding: 12, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6 }}>
+                      <Text type="secondary">
+                        <InfoCircleOutlined style={{ marginRight: 4 }} />
+                        集合包含 {collectionDetail.count} 个文档，以下显示前 {collectionDetail.sample_documents.length} 个样本文档
+                      </Text>
+                    </div>
+                  )}
+
+                  <List
+                    dataSource={collectionDetail.documents.length > 0 ? collectionDetail.documents : collectionDetail.sample_documents}
+                    renderItem={(doc, index) => (
+                      <List.Item>
+                        <Card size="small" style={{ width: '100%' }}>
+                          <Descriptions size="small" column={1}>
+                            <Descriptions.Item label="文档ID">
+                              <Text code>{doc.id}</Text>
+                            </Descriptions.Item>
+                            {doc.document && (
+                              <Descriptions.Item label="文档内容">
+                                <Paragraph
+                                  ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}
+                                  style={{ margin: 0 }}
+                                >
+                                  {doc.document}
+                                </Paragraph>
+                              </Descriptions.Item>
+                            )}
+                            {doc.metadata && Object.keys(doc.metadata).length > 0 && (
+                              <Descriptions.Item label="文档元数据">
+                                <pre style={{ margin: 0, fontSize: '11px', maxHeight: 100, overflow: 'auto' }}>
+                                  {JSON.stringify(doc.metadata, null, 2)}
+                                </pre>
+                              </Descriptions.Item>
+                            )}
+                            {doc.embedding && (
+                              <Descriptions.Item label="向量维度">
+                                <Tag color="purple">{doc.embedding.length} 维</Tag>
+                              </Descriptions.Item>
+                            )}
+                          </Descriptions>
+                        </Card>
+                      </List.Item>
+                    )}
+                    pagination={{
+                      pageSize: 5,
+                      showSizeChanger: false,
+                      showQuickJumper: true,
+                    }}
+                  />
+                </div>
+              )}
+            </TabPane>
+          </Tabs>
+        ) : (
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <Spin size="large" />
+          </div>
+        )}
       </Modal>
     </Layout>
   );

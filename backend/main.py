@@ -79,6 +79,21 @@ class CollectionInfo(BaseModel):
     count: int
     metadata: dict = {}
 
+class DocumentInfo(BaseModel):
+    id: str
+    document: Optional[str] = None
+    metadata: Optional[dict] = {}
+    embedding: Optional[List[float]] = None
+
+class CollectionDetail(BaseModel):
+    name: str
+    display_name: str
+    count: int
+    metadata: dict = {}
+    created_time: Optional[str] = None
+    documents: List[DocumentInfo] = []
+    sample_documents: List[DocumentInfo] = []
+
 class CreateCollectionRequest(BaseModel):
     name: str
     metadata: Optional[dict] = {}
@@ -141,6 +156,86 @@ async def get_collections():
     except Exception as e:
         logger.error(f"获取集合列表失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取集合列表失败: {str(e)}")
+
+@app.get("/api/collections/{collection_name}/detail", response_model=CollectionDetail)
+async def get_collection_detail(collection_name: str, limit: Optional[int] = 10):
+    """获取集合详细信息"""
+    try:
+        # 查找集合
+        collections = chroma_client.list_collections()
+        target_collection = None
+
+        for collection in collections:
+            metadata = collection.metadata or {}
+            # 支持通过原始名称或编码名称查找
+            if (metadata.get('original_name') == collection_name or
+                collection.name == collection_name):
+                target_collection = collection
+                break
+
+        if not target_collection:
+            raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
+
+        # 获取集合基本信息
+        metadata = target_collection.metadata or {}
+        display_name = metadata.get('original_name', target_collection.name)
+        count = target_collection.count()
+
+        # 获取文档数据
+        documents = []
+        sample_documents = []
+
+        if count > 0:
+            try:
+                # 获取所有文档（如果数量不多）或者样本文档
+                if count <= 100:
+                    # 获取所有文档
+                    results = target_collection.get(
+                        include=["documents", "metadatas", "embeddings"]
+                    )
+                else:
+                    # 获取样本文档
+                    results = target_collection.get(
+                        limit=limit,
+                        include=["documents", "metadatas", "embeddings"]
+                    )
+
+                # 处理文档数据
+                if results and results.get('ids'):
+                    for i, doc_id in enumerate(results['ids']):
+                        doc_info = DocumentInfo(
+                            id=doc_id,
+                            document=results.get('documents', [None])[i] if results.get('documents') else None,
+                            metadata=results.get('metadatas', [{}])[i] if results.get('metadatas') else {},
+                            embedding=results.get('embeddings', [None])[i] if results.get('embeddings') else None
+                        )
+
+                        if count <= 100:
+                            documents.append(doc_info)
+                        else:
+                            sample_documents.append(doc_info)
+
+            except Exception as e:
+                logger.warning(f"获取集合文档时出现警告: {e}")
+
+        # 获取创建时间（如果在元数据中）
+        created_time = metadata.get('created_time') or metadata.get('created_date')
+
+        return CollectionDetail(
+            name=target_collection.name,
+            display_name=display_name,
+            count=count,
+            metadata=metadata,
+            created_time=created_time,
+            documents=documents,
+            sample_documents=sample_documents
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取集合详细信息失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取集合详细信息失败: {str(e)}")
 
 @app.post("/api/collections")
 async def create_collection(request: CreateCollectionRequest):
