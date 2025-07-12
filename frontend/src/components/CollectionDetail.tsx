@@ -10,6 +10,7 @@ import {
   Descriptions,
   Tabs,
   List,
+  Table,
   Empty,
   Spin,
   message,
@@ -27,10 +28,9 @@ import axios from 'axios';
 
 const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
-const { TabPane } = Tabs;
 
 // API基础URL
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = '/api';
 
 // 文档信息接口
 interface DocumentInfo {
@@ -167,134 +167,236 @@ const CollectionDetail: React.FC = () => {
 
       <Content>
         <Card>
-          <Tabs defaultActiveKey="basic">
-            <TabPane tab={
-              <span>
-                <InfoCircleOutlined />
-                基本信息
-              </span>
-            } key="basic">
-              <Descriptions column={2} bordered>
-                <Descriptions.Item label="集合名称" span={2}>
-                  <Text strong>{collectionDetail.display_name}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="内部名称">
-                  <Text code>{collectionDetail.name}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label="文档数量">
-                  <Tag color={collectionDetail.count > 0 ? 'blue' : 'default'}>
-                    {collectionDetail.count} 个文档
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="向量维度">
-                  <Space>
-                    <Tag color="purple">1024 维</Tag>
-                    <Text type="secondary" style={{ fontSize: '12px' }}>
-                      (ChromaDB 默认配置)
-                    </Text>
-                  </Space>
-                </Descriptions.Item>
-                <Descriptions.Item label="向量模型">
-                  <Text type="secondary">all-MiniLM-L6-v2 (默认)</Text>
-                </Descriptions.Item>
-                {collectionDetail.created_time && (
-                  <Descriptions.Item label="创建时间" span={2}>
-                    <Space>
-                      <CalendarOutlined />
-                      {collectionDetail.created_time}
-                    </Space>
-                  </Descriptions.Item>
-                )}
-                <Descriptions.Item label="元数据" span={2}>
-                  {Object.keys(collectionDetail.metadata).length > 0 ? (
-                    <div style={{ maxHeight: 200, overflow: 'auto' }}>
-                      <pre style={{ margin: 0, fontSize: '12px' }}>
-                        {JSON.stringify(collectionDetail.metadata, null, 2)}
-                      </pre>
-                    </div>
+          <Tabs
+            defaultActiveKey="documents"
+            items={[
+              {
+                key: 'documents',
+                label: (
+                  <span>
+                    <FileTextOutlined />
+                    文档内容 ({collectionDetail.count > 0 ?
+                      (collectionDetail.documents.length > 0 ?
+                        `全部 ${collectionDetail.documents.length}` :
+                        `样本 ${collectionDetail.sample_documents.length}`) :
+                      '0'})
+                  </span>
+                ),
+                children: (
+                  collectionDetail.count === 0 ? (
+                    <Empty description="该集合暂无文档" />
                   ) : (
-                    <Text type="secondary">无元数据</Text>
-                  )}
-                </Descriptions.Item>
-              </Descriptions>
-            </TabPane>
+                    <div>
+                      {collectionDetail.count > 100 && (
+                        <div style={{ marginBottom: 16, padding: 12, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6 }}>
+                          <Text type="secondary">
+                            <InfoCircleOutlined style={{ marginRight: 4 }} />
+                            集合包含 {collectionDetail.count} 个文档，以下显示前 {collectionDetail.sample_documents.length} 个样本文档
+                          </Text>
+                        </div>
+                      )}
 
-            <TabPane tab={
-              <span>
-                <FileTextOutlined />
-                文档内容 ({collectionDetail.count > 0 ? 
-                  (collectionDetail.documents.length > 0 ? 
-                    `全部 ${collectionDetail.documents.length}` : 
-                    `样本 ${collectionDetail.sample_documents.length}`) : 
-                  '0'})
-              </span>
-            } key="documents">
-              {collectionDetail.count === 0 ? (
-                <Empty description="该集合暂无文档" />
-              ) : (
-                <div>
-                  {collectionDetail.count > 100 && (
-                    <div style={{ marginBottom: 16, padding: 12, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6 }}>
-                      <Text type="secondary">
-                        <InfoCircleOutlined style={{ marginRight: 4 }} />
-                        集合包含 {collectionDetail.count} 个文档，以下显示前 {collectionDetail.sample_documents.length} 个样本文档
-                      </Text>
-                    </div>
-                  )}
-                  
-                  <List
-                    dataSource={collectionDetail.documents.length > 0 ? collectionDetail.documents : collectionDetail.sample_documents}
-                    renderItem={(doc, index) => (
-                      <List.Item>
-                        <Card size="small" style={{ width: '100%' }}>
-                          <Descriptions size="small" column={1}>
-                            <Descriptions.Item label="文档ID">
-                              <Text code>{doc.id}</Text>
-                            </Descriptions.Item>
-                            {doc.document && (
-                              <Descriptions.Item label="文档内容">
-                                <Paragraph 
-                                  ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}
-                                  style={{ margin: 0 }}
+                      <Table
+                        dataSource={(collectionDetail.documents.length > 0 ? collectionDetail.documents : collectionDetail.sample_documents).map((doc, index) => ({
+                          ...doc,
+                          key: doc.id,
+                          index: index + 1
+                        }))}
+                        columns={[
+                          {
+                            title: '序号',
+                            dataIndex: 'index',
+                            key: 'index',
+                            width: 60,
+                            align: 'center',
+                            render: (index) => (
+                              <Text strong style={{ color: '#1890ff' }}>
+                                #{index}
+                              </Text>
+                            )
+                          },
+                          {
+                            title: '文档ID',
+                            dataIndex: 'id',
+                            key: 'id',
+                            width: 200,
+                            responsive: ['md'],
+                            render: (id) => (
+                              <Text code style={{ fontSize: '12px' }}>
+                                {id}
+                              </Text>
+                            )
+                          },
+                          {
+                            title: '内容预览',
+                            dataIndex: 'document',
+                            key: 'document',
+                            ellipsis: true,
+                            render: (document) => (
+                              document ? (
+                                <Paragraph
+                                  ellipsis={{
+                                    rows: 2,
+                                    expandable: true,
+                                    symbol: '展开',
+                                    tooltip: '点击展开完整内容'
+                                  }}
+                                  style={{
+                                    margin: 0,
+                                    fontSize: '13px',
+                                    lineHeight: '1.4',
+                                    maxWidth: '300px'
+                                  }}
                                 >
-                                  {doc.document}
+                                  {document}
                                 </Paragraph>
-                              </Descriptions.Item>
-                            )}
-                            {doc.metadata && Object.keys(doc.metadata).length > 0 && (
-                              <Descriptions.Item label="文档元数据">
-                                <pre style={{ margin: 0, fontSize: '11px', maxHeight: 100, overflow: 'auto' }}>
-                                  {JSON.stringify(doc.metadata, null, 2)}
-                                </pre>
-                              </Descriptions.Item>
-                            )}
-                            <Descriptions.Item label="向量信息">
-                              {doc.embedding ? (
-                                <Space>
-                                  <Tag color="purple">{doc.embedding.length} 维向量</Tag>
-                                  <Text type="secondary" style={{ fontSize: '12px' }}>
-                                    (ChromaDB 默认: 1024维)
-                                  </Text>
-                                </Space>
                               ) : (
-                                <Text type="secondary">暂无向量数据</Text>
-                              )}
-                            </Descriptions.Item>
-                          </Descriptions>
-                        </Card>
-                      </List.Item>
+                                <Text type="secondary" style={{ fontSize: '12px' }}>
+                                  无内容
+                                </Text>
+                              )
+                            )
+                          },
+                          {
+                            title: '元数据',
+                            dataIndex: 'metadata',
+                            key: 'metadata',
+                            width: 200,
+                            responsive: ['lg'],
+                            render: (metadata) => (
+                              metadata && Object.keys(metadata).length > 0 ? (
+                                <div style={{
+                                  maxHeight: '80px',
+                                  overflow: 'auto',
+                                  fontSize: '11px',
+                                  fontFamily: 'Monaco, Consolas, monospace',
+                                  backgroundColor: '#f6f8fa',
+                                  padding: '4px 8px',
+                                  borderRadius: '3px',
+                                  border: '1px solid #e1e4e8'
+                                }}>
+                                  <pre style={{ margin: 0, color: '#586069' }}>
+                                    {JSON.stringify(metadata, null, 2)}
+                                  </pre>
+                                </div>
+                              ) : (
+                                <Text type="secondary" style={{ fontSize: '12px' }}>
+                                  无元数据
+                                </Text>
+                              )
+                            )
+                          },
+                          {
+                            title: '向量信息',
+                            dataIndex: 'embedding',
+                            key: 'embedding',
+                            width: 120,
+                            align: 'center',
+                            render: (embedding) => (
+                              embedding ? (
+                                <Tag color="purple" style={{ fontSize: '11px' }}>
+                                  {embedding.length}维
+                                </Tag>
+                              ) : (
+                                <Tag color="default" style={{ fontSize: '11px' }}>
+                                  无向量
+                                </Tag>
+                              )
+                            )
+                          },
+                          {
+                            title: '统计信息',
+                            key: 'stats',
+                            width: 150,
+                            responsive: ['xl'],
+                            render: (_, record) => (
+                              <div style={{ fontSize: '11px' }}>
+                                <div>
+                                  <Text type="secondary">
+                                    字符: {record.document ? record.document.length : 0}
+                                  </Text>
+                                </div>
+                                <div>
+                                  <Text type="secondary">
+                                    元数据: {record.metadata ? Object.keys(record.metadata).length : 0}项
+                                  </Text>
+                                </div>
+                              </div>
+                            )
+                          }
+                        ]}
+                        pagination={{
+                          pageSize: 8,
+                          showSizeChanger: true,
+                          showQuickJumper: true,
+                          showTotal: (total, range) => `第 ${range[0]}-${range[1]} 项，共 ${total} 个文档`,
+                          pageSizeOptions: ['5', '8', '10', '20'],
+                        }}
+                        size="small"
+                        bordered
+                        scroll={{ x: 1200 }}
+                      />
+                    </div>
+                  )
+                )
+              },
+
+              {
+                key: 'basic',
+                label: (
+                  <span>
+                    <InfoCircleOutlined />
+                    基本信息
+                  </span>
+                ),
+                children: (
+                  <Descriptions column={2} bordered>
+                    <Descriptions.Item label="集合名称" span={2}>
+                      <Text strong>{collectionDetail.display_name}</Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="内部名称">
+                      <Text code>{collectionDetail.name}</Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="文档数量">
+                      <Tag color={collectionDetail.count > 0 ? 'blue' : 'default'}>
+                        {collectionDetail.count} 个文档
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="向量维度">
+                      <Space>
+                        <Tag color="purple">1024 维</Tag>
+                        <Text type="secondary" style={{ fontSize: '12px' }}>
+                          (ChromaDB 默认配置)
+                        </Text>
+                      </Space>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="向量模型">
+                      <Text type="secondary">all-MiniLM-L6-v2 (默认)</Text>
+                    </Descriptions.Item>
+                    {collectionDetail.created_time && (
+                      <Descriptions.Item label="创建时间" span={2}>
+                        <Space>
+                          <CalendarOutlined />
+                          {collectionDetail.created_time}
+                        </Space>
+                      </Descriptions.Item>
                     )}
-                    pagination={{
-                      pageSize: 5,
-                      showSizeChanger: false,
-                      showQuickJumper: true,
-                      showTotal: (total) => `共 ${total} 个文档`,
-                    }}
-                  />
-                </div>
-              )}
-            </TabPane>
-          </Tabs>
+                    <Descriptions.Item label="元数据" span={2}>
+                      {Object.keys(collectionDetail.metadata).length > 0 ? (
+                        <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                          <pre style={{ margin: 0, fontSize: '12px' }}>
+                            {JSON.stringify(collectionDetail.metadata, null, 2)}
+                          </pre>
+                        </div>
+                      ) : (
+                        <Text type="secondary">无元数据</Text>
+                      )}
+                    </Descriptions.Item>
+                  </Descriptions>
+                )
+              }
+            ]}
+          />
         </Card>
       </Content>
     </Layout>

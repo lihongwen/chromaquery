@@ -26,11 +26,10 @@ import {
 import axios from 'axios';
 
 const { Header, Content } = Layout;
-const { Title, Text, Paragraph } = Typography;
-const { TabPane } = Tabs;
+const { Title } = Typography;
 
 // API基础URL
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = '/api';
 
 // 集合信息接口
 interface CollectionInfo {
