@@ -5,6 +5,8 @@ RAG文档分块处理模块
 
 import re
 import logging
+import time
+import numpy as np
 from typing import List, Dict, Any, Optional
 from enum import Enum
 from pydantic import BaseModel
@@ -13,8 +15,24 @@ from langchain_text_splitters import (
     CharacterTextSplitter,
     TokenTextSplitter
 )
+from sklearn.metrics.pairwise import cosine_similarity
+import nltk
+from nltk.tokenize import sent_tokenize
 
 logger = logging.getLogger(__name__)
+
+# 确保NLTK数据已下载
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    logger.info("下载NLTK punkt tokenizer...")
+    nltk.download('punkt', quiet=True)
+
+try:
+    nltk.data.find('tokenizers/punkt_tab')
+except LookupError:
+    logger.info("下载NLTK punkt_tab tokenizer...")
+    nltk.download('punkt_tab', quiet=True)
 
 
 class ChunkingMethod(str, Enum):
@@ -60,6 +78,19 @@ class RAGChunker:
             ChunkingMethod.FIXED_SIZE: ["\n", " "],
             ChunkingMethod.SEMANTIC: ["\n\n", "\n", "。", "！", "？"]
         }
+        self._embedding_function = None
+
+    def _get_embedding_function(self):
+        """获取嵌入函数（延迟加载）"""
+        if self._embedding_function is None:
+            try:
+                from alibaba_embedding import create_alibaba_embedding_function
+                self._embedding_function = create_alibaba_embedding_function(dimension=1024)
+                logger.info("成功创建阿里云嵌入函数用于语义分块")
+            except Exception as e:
+                logger.error(f"创建阿里云嵌入函数失败: {e}")
+                raise Exception(f"语义分块需要阿里云嵌入函数，但创建失败: {str(e)}")
+        return self._embedding_function
     
     def chunk_text(self, text: str, config: ChunkingConfig) -> ChunkingResult:
         """
@@ -129,42 +160,40 @@ class RAGChunker:
         return self._create_document_chunks(chunks, text, config.method)
     
     def _semantic_chunk(self, text: str, config: ChunkingConfig) -> List[DocumentChunk]:
-        """语义分块"""
-        # 简化的语义分块实现
-        # 在实际项目中，可以使用更复杂的语义相似度计算
-        
-        # 首先按段落分割
-        paragraphs = re.split(r'\n\s*\n', text)
-        if not paragraphs:
-            paragraphs = [text]
-        
-        chunks = []
-        current_chunk = ""
-        current_size = 0
-        
-        for paragraph in paragraphs:
-            paragraph = paragraph.strip()
-            if not paragraph:
-                continue
-            
-            # 如果当前段落加上现有块超过大小限制，则创建新块
-            if current_size + len(paragraph) > config.chunk_size and current_chunk:
-                chunks.append(current_chunk.strip())
-                current_chunk = paragraph
-                current_size = len(paragraph)
-            else:
-                if current_chunk:
-                    current_chunk += "\n\n" + paragraph
-                    current_size += len(paragraph) + 2
-                else:
-                    current_chunk = paragraph
-                    current_size = len(paragraph)
-        
-        # 添加最后一个块
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        
-        return self._create_document_chunks(chunks, text, config.method)
+        """语义分块 - 基于语义相似度的智能分块"""
+        try:
+            logger.info(f"开始语义分块，文本长度: {len(text)}, 阈值: {config.semantic_threshold}")
+
+            # 1. 将文本分割为句子
+            sentences = self._split_into_sentences(text)
+            if len(sentences) <= 1:
+                # 如果只有一个句子或没有句子，直接返回
+                return self._create_document_chunks([text], text, config.method)
+
+            logger.info(f"分割为 {len(sentences)} 个句子")
+
+            # 2. 计算句子的嵌入向量
+            embeddings = self._get_sentence_embeddings(sentences)
+            logger.info(f"生成 {len(embeddings)} 个嵌入向量")
+
+            # 3. 计算相邻句子的语义相似度
+            similarities = self._calculate_similarities(embeddings)
+            logger.info(f"计算了 {len(similarities)} 个相似度值")
+
+            # 4. 根据相似度阈值确定分割点
+            split_points = self._find_split_points(similarities, config.semantic_threshold or 0.7)
+            logger.info(f"找到 {len(split_points)} 个分割点")
+
+            # 5. 根据分割点创建语义块
+            chunks = self._create_semantic_chunks(sentences, split_points, config)
+            logger.info(f"创建了 {len(chunks)} 个语义块")
+
+            return self._create_document_chunks(chunks, text, config.method)
+
+        except Exception as e:
+            logger.error(f"语义分块失败，回退到段落分块: {e}")
+            # 如果语义分块失败，回退到简单的段落分块
+            return self._fallback_paragraph_chunk(text, config)
     
     def _create_document_chunks(
         self, 
@@ -203,6 +232,166 @@ class RAGChunker:
             ))
         
         return document_chunks
+
+    def _split_into_sentences(self, text: str) -> List[str]:
+        """将文本分割为句子"""
+        try:
+            # 使用NLTK进行句子分割
+            sentences = sent_tokenize(text, language='english')
+
+            # 过滤掉空句子和过短的句子
+            filtered_sentences = []
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if len(sentence) > 10:  # 过滤掉过短的句子
+                    filtered_sentences.append(sentence)
+
+            return filtered_sentences if filtered_sentences else [text]
+
+        except Exception as e:
+            logger.warning(f"NLTK句子分割失败，使用简单分割: {e}")
+            # 回退到简单的句子分割
+            sentences = re.split(r'[。！？.!?]+', text)
+            return [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
+
+    def _get_sentence_embeddings(self, sentences: List[str]) -> np.ndarray:
+        """获取句子的嵌入向量"""
+        embedding_func = self._get_embedding_function()
+
+        # 阿里云API限制：批量大小不能超过10
+        batch_size = 10
+        all_embeddings = []
+
+        for i in range(0, len(sentences), batch_size):
+            batch = sentences[i:i + batch_size]
+            batch_embeddings = embedding_func(batch)
+            all_embeddings.extend(batch_embeddings)
+
+        # 转换为numpy数组
+        return np.array(all_embeddings)
+
+    def _calculate_similarities(self, embeddings: np.ndarray) -> List[float]:
+        """计算相邻句子的语义相似度"""
+        similarities = []
+
+        for i in range(len(embeddings) - 1):
+            # 计算相邻句子的余弦相似度
+            sim = cosine_similarity(
+                embeddings[i].reshape(1, -1),
+                embeddings[i + 1].reshape(1, -1)
+            )[0][0]
+            similarities.append(sim)
+
+        return similarities
+
+    def _find_split_points(self, similarities: List[float], threshold: float) -> List[int]:
+        """根据相似度阈值找到分割点"""
+        split_points = []
+
+        for i, sim in enumerate(similarities):
+            # 当相似度低于阈值时，在此处分割
+            if sim < threshold:
+                split_points.append(i + 1)  # 在下一个句子前分割
+
+        return split_points
+
+    def _create_semantic_chunks(self, sentences: List[str], split_points: List[int], config: ChunkingConfig) -> List[str]:
+        """根据分割点创建语义块"""
+        chunks = []
+        start_idx = 0
+
+        # 添加所有分割点
+        all_split_points = split_points + [len(sentences)]
+
+        for split_point in all_split_points:
+            # 合并句子形成块
+            chunk_sentences = sentences[start_idx:split_point]
+            if chunk_sentences:
+                chunk_text = ' '.join(chunk_sentences)
+
+                # 检查块大小，如果太大则进一步分割
+                if len(chunk_text) > config.chunk_size:
+                    # 如果块太大，按大小限制进一步分割
+                    sub_chunks = self._split_large_chunk(chunk_text, config.chunk_size, config.chunk_overlap)
+                    chunks.extend(sub_chunks)
+                else:
+                    chunks.append(chunk_text)
+
+            start_idx = split_point
+
+        return chunks
+
+    def _split_large_chunk(self, text: str, max_size: int, overlap: int) -> List[str]:
+        """分割过大的块"""
+        chunks = []
+        start = 0
+
+        while start < len(text):
+            end = start + max_size
+
+            if end >= len(text):
+                # 最后一块
+                chunks.append(text[start:])
+                break
+
+            # 尝试在句子边界分割
+            chunk = text[start:end]
+            last_sentence_end = max(
+                chunk.rfind('。'),
+                chunk.rfind('！'),
+                chunk.rfind('？'),
+                chunk.rfind('.'),
+                chunk.rfind('!'),
+                chunk.rfind('?')
+            )
+
+            if last_sentence_end > 0:
+                # 在句子边界分割
+                chunks.append(text[start:start + last_sentence_end + 1])
+                start = start + last_sentence_end + 1 - overlap
+            else:
+                # 没有找到句子边界，强制分割
+                chunks.append(chunk)
+                start = end - overlap
+
+        return chunks
+
+    def _fallback_paragraph_chunk(self, text: str, config: ChunkingConfig) -> List[DocumentChunk]:
+        """回退的段落分块方法"""
+        logger.info("使用回退的段落分块方法")
+
+        # 按段落分割
+        paragraphs = re.split(r'\n\s*\n', text)
+        if not paragraphs:
+            paragraphs = [text]
+
+        chunks = []
+        current_chunk = ""
+        current_size = 0
+
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
+
+            # 如果当前段落加上现有块超过大小限制，则创建新块
+            if current_size + len(paragraph) > config.chunk_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = paragraph
+                current_size = len(paragraph)
+            else:
+                if current_chunk:
+                    current_chunk += "\n\n" + paragraph
+                    current_size += len(paragraph) + 2
+                else:
+                    current_chunk = paragraph
+                    current_size = len(paragraph)
+
+        # 添加最后一个块
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+
+        return self._create_document_chunks(chunks, text, config.method)
 
 
 def get_default_chunking_config(method: ChunkingMethod) -> ChunkingConfig:
