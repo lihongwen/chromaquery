@@ -121,6 +121,19 @@ const QueryPage: React.FC = () => {
     }, 100);
   };
 
+  // 滚动到对话开头
+  const scrollToConversationTop = () => {
+    // 使用setTimeout确保DOM已更新
+    setTimeout(() => {
+      if (conversationContentRef.current) {
+        conversationContentRef.current.scrollTo({
+          top: 0,
+          behavior: 'smooth'
+        });
+      }
+    }, 100);
+  };
+
   // 发送查询
   const handleQuery = async () => {
     if (!queryText.trim()) {
@@ -279,10 +292,10 @@ const QueryPage: React.FC = () => {
     }
   }, [conversations]);
 
-  // 当切换对话时，自动滚动到最新消息
+  // 当切换对话时，自动滚动到对话开头
   useEffect(() => {
     if (currentConversation && currentConversation.messages.length > 0) {
-      scrollToLatestMessage();
+      scrollToConversationTop();
     }
   }, [currentConversation]);
 
