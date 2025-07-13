@@ -4,6 +4,7 @@ import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import CollectionManager from './components/CollectionManager';
 import CollectionDetail from './components/CollectionDetail';
+import QueryPage from './components/QueryPage';
 import './App.css';
 
 function App() {
@@ -14,6 +15,7 @@ function App() {
           <Routes>
             <Route path="/" element={<CollectionManager />} />
             <Route path="/collections/:collectionName/detail" element={<CollectionDetail />} />
+            <Route path="/query" element={<QueryPage />} />
           </Routes>
         </Router>
       </div>

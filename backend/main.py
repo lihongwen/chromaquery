@@ -8,12 +8,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import chromadb
 from chromadb.config import Settings
+import chromadb.utils.embedding_functions as ef
 import uvicorn
 import logging
 from typing import List, Optional
 import base64
 import hashlib
 from pydantic import BaseModel
+from dotenv import load_dotenv
+import os
+from alibaba_embedding import create_alibaba_embedding_function
+from fastapi import UploadFile, File, Form
+import tempfile
+import time
+from rag_chunking import RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config
+
+# 加载环境变量
+load_dotenv()
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -78,6 +89,8 @@ class CollectionInfo(BaseModel):
     display_name: str
     count: int
     metadata: dict = {}
+    files_count: Optional[int] = None
+    chunk_statistics: Optional[dict] = None
 
 class DocumentInfo(BaseModel):
     id: str
@@ -93,6 +106,8 @@ class CollectionDetail(BaseModel):
     created_time: Optional[str] = None
     documents: List[DocumentInfo] = []
     sample_documents: List[DocumentInfo] = []
+    uploaded_files: List[str] = []
+    chunk_statistics: dict = {}
 
 class CreateCollectionRequest(BaseModel):
     name: str
@@ -101,6 +116,42 @@ class CreateCollectionRequest(BaseModel):
 class RenameCollectionRequest(BaseModel):
     old_name: str
     new_name: str
+
+class AddDocumentRequest(BaseModel):
+    collection_name: str
+    documents: List[str]
+    metadatas: Optional[List[dict]] = None
+    ids: Optional[List[str]] = None
+
+class ChunkTextRequest(BaseModel):
+    text: str
+    chunking_config: ChunkingConfig
+
+class FileUploadResponse(BaseModel):
+    message: str
+    file_name: str
+    chunks_created: int
+    total_size: int
+    processing_time: float
+    collection_name: str
+
+class QueryRequest(BaseModel):
+    query: str
+    collections: List[str]
+    limit: Optional[int] = 5
+
+class QueryResult(BaseModel):
+    id: str
+    document: str
+    metadata: dict
+    distance: float
+    collection_name: str
+
+class QueryResponse(BaseModel):
+    query: str
+    results: List[QueryResult]
+    total_results: int
+    processing_time: float
 
 @app.on_event("startup")
 async def startup_event():
@@ -145,11 +196,44 @@ async def get_collections():
             except:
                 count = 0
 
+            # 获取文件统计信息
+            files_count = None
+            chunk_statistics = None
+            try:
+                if count > 0:
+                    # 获取所有文档的元数据来计算文件统计
+                    docs_result = collection.get(limit=count, include=['metadatas'])
+                    if docs_result and docs_result['metadatas']:
+                        # 统计唯一文件数
+                        unique_files = set()
+                        methods_used = set()
+
+                        for doc_metadata in docs_result['metadatas']:
+                            if doc_metadata:
+                                file_name = doc_metadata.get('file_name') or doc_metadata.get('source_file')
+                                if file_name:
+                                    unique_files.add(file_name)
+
+                                chunk_method = doc_metadata.get('chunk_method')
+                                if chunk_method:
+                                    methods_used.add(chunk_method)
+
+                        files_count = len(unique_files)
+                        chunk_statistics = {
+                            'total_chunks': count,
+                            'files_count': files_count,
+                            'methods_used': list(methods_used)
+                        }
+            except Exception as e:
+                logger.warning(f"获取集合 {collection.name} 的文件统计信息失败: {e}")
+
             result.append(CollectionInfo(
                 name=collection.name,  # 原始编码名称
                 display_name=display_name,  # 显示名称（中文）
                 count=count,
-                metadata=metadata
+                metadata=metadata,
+                files_count=files_count,
+                chunk_statistics=chunk_statistics
             ))
 
         return result
@@ -221,6 +305,58 @@ async def get_collection_detail(collection_name: str, limit: Optional[int] = 10)
         # 获取创建时间（如果在元数据中）
         created_time = metadata.get('created_time') or metadata.get('created_date')
 
+        # 计算文件统计信息
+        uploaded_files = set()
+        chunk_methods = set()
+        total_chunks = 0
+
+        # 从所有文档中提取文件信息
+        all_docs = documents if documents else sample_documents
+        for doc in all_docs:
+            doc_metadata = doc.metadata or {}
+            file_name = doc_metadata.get('file_name')
+            if file_name:
+                uploaded_files.add(file_name)
+
+            chunk_method = doc_metadata.get('chunk_method')
+            if chunk_method:
+                chunk_methods.add(chunk_method)
+
+            if doc_metadata.get('chunk_index') is not None:
+                total_chunks += 1
+
+        # 如果没有从样本中获取到完整信息，尝试获取更多数据
+        if count > 100 and len(uploaded_files) == 0:
+            try:
+                # 获取更多文档来统计文件信息
+                more_results = target_collection.get(
+                    limit=min(count, 1000),  # 最多获取1000个文档用于统计
+                    include=["metadatas"]
+                )
+
+                if more_results and more_results.get('metadatas'):
+                    for metadata_item in more_results['metadatas']:
+                        if metadata_item:
+                            file_name = metadata_item.get('file_name')
+                            if file_name:
+                                uploaded_files.add(file_name)
+
+                            chunk_method = metadata_item.get('chunk_method')
+                            if chunk_method:
+                                chunk_methods.add(chunk_method)
+
+                            if metadata_item.get('chunk_index') is not None:
+                                total_chunks += 1
+
+            except Exception as e:
+                logger.warning(f"获取文件统计信息时出现警告: {e}")
+
+        chunk_statistics = {
+            "total_chunks": total_chunks if total_chunks > 0 else count,
+            "files_count": len(uploaded_files),
+            "methods_used": list(chunk_methods)
+        }
+
         return CollectionDetail(
             name=target_collection.name,
             display_name=display_name,
@@ -228,7 +364,9 @@ async def get_collection_detail(collection_name: str, limit: Optional[int] = 10)
             metadata=metadata,
             created_time=created_time,
             documents=documents,
-            sample_documents=sample_documents
+            sample_documents=sample_documents,
+            uploaded_files=list(uploaded_files),
+            chunk_statistics=chunk_statistics
         )
 
     except HTTPException:
@@ -254,11 +392,22 @@ async def create_collection(request: CreateCollectionRequest):
         # 准备元数据，包含原始中文名称
         metadata = request.metadata or {}
         metadata['original_name'] = request.name
+        metadata['embedding_model'] = 'alibaba-text-embedding-v4'
+        metadata['vector_dimension'] = 1024
 
-        # 创建集合
+        # 创建阿里云嵌入函数
+        try:
+            alibaba_embedding_func = create_alibaba_embedding_function(dimension=1024)
+            logger.info(f"成功创建阿里云嵌入函数，维度: 1024")
+        except Exception as e:
+            logger.error(f"创建阿里云嵌入函数失败: {e}")
+            raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
+
+        # 创建集合，使用阿里云嵌入函数
         collection = chroma_client.create_collection(
             name=encoded_name,
-            metadata=metadata
+            metadata=metadata,
+            embedding_function=alibaba_embedding_func
         )
 
         return {
@@ -369,6 +518,397 @@ async def rename_collection(request: RenameCollectionRequest):
     except Exception as e:
         logger.error(f"重命名集合失败: {e}")
         raise HTTPException(status_code=500, detail=f"重命名集合失败: {str(e)}")
+
+@app.post("/api/collections/{collection_name}/documents")
+async def add_documents(collection_name: str, request: AddDocumentRequest):
+    """向集合添加文档"""
+    try:
+        # 查找集合
+        collections = chroma_client.list_collections()
+        target_collection = None
+
+        for collection in collections:
+            metadata = collection.metadata or {}
+            # 支持通过原始名称或编码名称查找
+            if (metadata.get('original_name') == collection_name or
+                collection.name == collection_name):
+                target_collection = collection
+                break
+
+        if not target_collection:
+            raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
+
+        # 检查集合是否使用阿里云嵌入模型
+        collection_metadata = target_collection.metadata or {}
+        embedding_model = collection_metadata.get('embedding_model')
+
+        if embedding_model == 'alibaba-text-embedding-v4':
+            # 重新创建阿里云嵌入函数
+            try:
+                alibaba_embedding_func = create_alibaba_embedding_function(dimension=1024)
+                logger.info(f"为集合 '{collection_name}' 重新创建阿里云嵌入函数")
+
+                # 使用阿里云嵌入函数生成向量
+                embeddings = alibaba_embedding_func(request.documents)
+                logger.info(f"成功生成 {len(embeddings)} 个1024维向量")
+
+            except Exception as e:
+                logger.error(f"创建阿里云嵌入函数失败: {e}")
+                raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
+        else:
+            # 使用默认嵌入函数
+            embeddings = None
+            logger.info(f"集合 '{collection_name}' 使用默认嵌入函数")
+
+        # 准备文档数据
+        documents = request.documents
+        metadatas = request.metadatas or [{}] * len(documents)
+        ids = request.ids or [f"doc_{i}_{hash(doc)}" for i, doc in enumerate(documents)]
+
+        # 确保数据长度一致
+        if len(metadatas) != len(documents):
+            metadatas = metadatas + [{}] * (len(documents) - len(metadatas))
+
+        if len(ids) != len(documents):
+            raise HTTPException(status_code=400, detail="文档ID数量与文档数量不匹配")
+
+        # 添加文档到集合
+        if embeddings:
+            # 使用预生成的向量
+            target_collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids,
+                embeddings=embeddings
+            )
+        else:
+            # 使用集合的默认嵌入函数
+            target_collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+
+        return {
+            "message": f"成功向集合 '{collection_name}' 添加 {len(documents)} 个文档",
+            "added_count": len(documents),
+            "collection_name": collection_name
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"添加文档失败: {e}")
+        raise HTTPException(status_code=500, detail=f"添加文档失败: {str(e)}")
+
+@app.post("/api/collections/{collection_name}/upload", response_model=FileUploadResponse)
+async def upload_document(
+    collection_name: str,
+    file: UploadFile = File(...),
+    chunking_config: str = Form(...)
+):
+    """上传文档文件并进行RAG分块处理"""
+    start_time = time.time()
+
+    try:
+        # 验证文件格式
+        if not file.filename.lower().endswith('.txt'):
+            raise HTTPException(status_code=400, detail="只支持 .txt 格式文件")
+
+        # 验证文件大小 (10MB限制)
+        content = await file.read()
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="文件大小不能超过 10MB")
+
+        # 解析分块配置
+        import json
+        try:
+            config_dict = json.loads(chunking_config)
+            config = ChunkingConfig(**config_dict)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"分块配置格式错误: {e}")
+
+        # 读取文件内容
+        text_content = content.decode('utf-8')
+
+        # 查找集合
+        collections = chroma_client.list_collections()
+        target_collection = None
+
+        for collection in collections:
+            metadata = collection.metadata or {}
+            # 支持通过原始名称或编码名称查找
+            if (metadata.get('original_name') == collection_name or
+                collection.name == collection_name):
+                target_collection = collection
+                break
+
+        if not target_collection:
+            raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
+
+        # 进行RAG分块
+        chunker = RAGChunker()
+        chunking_result = chunker.chunk_text(text_content, config)
+
+        # 准备文档数据
+        documents = []
+        metadatas = []
+        ids = []
+
+        for chunk in chunking_result.chunks:
+            documents.append(chunk.text)
+
+            # 创建元数据
+            metadata = {
+                "file_name": file.filename,
+                "chunk_method": config.method.value,
+                "chunk_index": chunk.index,
+                "chunk_size": len(chunk.text),
+                "start_position": chunk.start_pos,
+                "end_position": chunk.end_pos,
+                "upload_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "total_chunks": chunking_result.total_chunks
+            }
+            metadatas.append(metadata)
+
+            # 生成文档ID
+            import uuid
+            chunk_id = f"{file.filename}_{chunk.index}_{str(uuid.uuid4())[:8]}"
+            ids.append(chunk_id)
+
+        # 检查集合是否使用阿里云嵌入模型
+        collection_metadata = target_collection.metadata or {}
+        embedding_model = collection_metadata.get('embedding_model')
+
+        if embedding_model == 'alibaba-text-embedding-v4':
+            # 重新创建阿里云嵌入函数
+            try:
+                alibaba_embedding_func = create_alibaba_embedding_function(dimension=1024)
+                logger.info(f"为集合 '{collection_name}' 重新创建阿里云嵌入函数")
+
+                # 使用阿里云嵌入函数生成向量
+                embeddings = alibaba_embedding_func(documents)
+                logger.info(f"成功生成 {len(embeddings)} 个1024维向量")
+
+            except Exception as e:
+                logger.error(f"创建阿里云嵌入函数失败: {e}")
+                raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
+        else:
+            # 使用默认嵌入函数
+            embeddings = None
+            logger.info(f"集合 '{collection_name}' 使用默认嵌入函数")
+
+        # 添加到ChromaDB
+        if embeddings:
+            # 使用预生成的向量
+            target_collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids,
+                embeddings=embeddings
+            )
+        else:
+            # 使用集合的默认嵌入函数
+            target_collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+
+        processing_time = time.time() - start_time
+
+        return FileUploadResponse(
+            message="文档上传并处理完成",
+            file_name=file.filename,
+            chunks_created=len(documents),
+            total_size=len(content),
+            processing_time=processing_time,
+            collection_name=collection_name
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"文档上传失败: {e}")
+        raise HTTPException(status_code=500, detail=f"文档上传失败: {str(e)}")
+
+@app.post("/api/collections/{collection_name}/chunk")
+async def chunk_text(collection_name: str, request: ChunkTextRequest):
+    """对文本进行RAG分块处理（预览功能）"""
+    try:
+        # 验证集合是否存在
+        collections = chroma_client.list_collections()
+        target_collection = None
+
+        for collection in collections:
+            metadata = collection.metadata or {}
+            if (metadata.get('original_name') == collection_name or
+                collection.name == collection_name):
+                target_collection = collection
+                break
+
+        if not target_collection:
+            raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
+
+        # 进行RAG分块
+        chunker = RAGChunker()
+        chunking_result = chunker.chunk_text(request.text, request.chunking_config)
+
+        # 转换为API响应格式
+        chunks = []
+        for chunk in chunking_result.chunks:
+            chunks.append({
+                "text": chunk.text,
+                "index": chunk.index,
+                "start_pos": chunk.start_pos,
+                "end_pos": chunk.end_pos,
+                "metadata": chunk.metadata
+            })
+
+        return {
+            "chunks": chunks,
+            "total_chunks": chunking_result.total_chunks,
+            "method_used": chunking_result.method_used.value,
+            "processing_time": chunking_result.processing_time,
+            "original_length": chunking_result.original_length
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"文本分块失败: {e}")
+        raise HTTPException(status_code=500, detail=f"文本分块失败: {str(e)}")
+
+@app.get("/api/chunking/config/{method}")
+async def get_default_chunking_config_api(method: str):
+    """获取指定分块方式的默认配置"""
+    try:
+        chunking_method = ChunkingMethod(method)
+        config = get_default_chunking_config(chunking_method)
+        return config.model_dump()
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"不支持的分块方式: {method}")
+    except Exception as e:
+        logger.error(f"获取默认配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取默认配置失败: {str(e)}")
+
+@app.post("/api/query", response_model=QueryResponse)
+async def query_collections(request: QueryRequest):
+    """在指定集合中进行向量查询"""
+    start_time = time.time()
+
+    try:
+        if not request.query.strip():
+            raise HTTPException(status_code=400, detail="查询内容不能为空")
+
+        if not request.collections:
+            raise HTTPException(status_code=400, detail="请选择至少一个集合")
+
+        # 验证集合是否存在
+        existing_collections = chroma_client.list_collections()
+        collection_map = {}
+
+        for collection in existing_collections:
+            metadata = collection.metadata or {}
+            display_name = metadata.get('original_name', collection.name)
+            collection_map[display_name] = collection
+
+        # 检查请求的集合是否都存在
+        missing_collections = []
+        target_collections = []
+
+        for collection_name in request.collections:
+            if collection_name in collection_map:
+                target_collections.append((collection_name, collection_map[collection_name]))
+            else:
+                missing_collections.append(collection_name)
+
+        if missing_collections:
+            raise HTTPException(
+                status_code=404,
+                detail=f"以下集合不存在: {', '.join(missing_collections)}"
+            )
+
+        # 生成查询向量
+        # 使用第一个集合的嵌入模型来生成查询向量
+        first_collection = target_collections[0][1]
+        collection_metadata = first_collection.metadata or {}
+        embedding_model = collection_metadata.get('embedding_model')
+
+        query_embedding = None
+        if embedding_model == 'alibaba-text-embedding-v4':
+            try:
+                alibaba_embedding_func = create_alibaba_embedding_function(dimension=1024)
+                query_embeddings = alibaba_embedding_func([request.query])
+                query_embedding = query_embeddings[0]
+                logger.info(f"使用阿里云嵌入模型生成查询向量，维度: {len(query_embedding)}")
+            except Exception as e:
+                logger.error(f"生成查询向量失败: {e}")
+                raise HTTPException(status_code=500, detail=f"生成查询向量失败: {str(e)}")
+
+        # 在每个集合中进行查询
+        all_results = []
+
+        for collection_name, collection in target_collections:
+            try:
+                # 执行向量查询
+                if query_embedding:
+                    # 使用预生成的向量查询
+                    search_results = collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=request.limit,
+                        include=['documents', 'metadatas', 'distances']
+                    )
+                else:
+                    # 使用文本查询（让ChromaDB自动生成向量）
+                    search_results = collection.query(
+                        query_texts=[request.query],
+                        n_results=request.limit,
+                        include=['documents', 'metadatas', 'distances']
+                    )
+
+                # 处理查询结果
+                if search_results and search_results.get('ids') and search_results['ids'][0]:
+                    for i, doc_id in enumerate(search_results['ids'][0]):
+                        distance = search_results['distances'][0][i] if search_results.get('distances') else 0.0
+                        similarity = 1 - distance
+
+                        # 只添加相似度大于0的结果（即distance < 1的结果）
+                        if similarity > 0:
+                            result = QueryResult(
+                                id=doc_id,
+                                document=search_results['documents'][0][i] if search_results.get('documents') else "",
+                                metadata=search_results['metadatas'][0][i] if search_results.get('metadatas') else {},
+                                distance=distance,
+                                collection_name=collection_name
+                            )
+                            all_results.append(result)
+
+            except Exception as e:
+                logger.warning(f"在集合 '{collection_name}' 中查询失败: {e}")
+                # 继续查询其他集合，不中断整个查询过程
+                continue
+
+        # 按相似度排序（距离越小越相似）
+        all_results.sort(key=lambda x: x.distance)
+
+        # 限制返回结果数量
+        final_results = all_results[:request.limit]
+
+        processing_time = time.time() - start_time
+
+        return QueryResponse(
+            query=request.query,
+            results=final_results,
+            total_results=len(final_results),
+            processing_time=processing_time
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"查询失败: {e}")
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

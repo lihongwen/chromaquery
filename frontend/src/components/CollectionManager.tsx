@@ -22,6 +22,7 @@ import {
   ReloadOutlined,
   DatabaseOutlined,
   EyeOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -37,6 +38,14 @@ interface CollectionInfo {
   display_name: string;
   count: number;
   metadata: Record<string, any>;
+  chunk_count?: number;
+  uploaded_files?: string[];
+  files_count?: number;
+  chunk_statistics?: {
+    total_chunks: number;
+    files_count: number;
+    methods_used: string[];
+  };
 }
 
 // 创建集合请求接口
@@ -156,34 +165,89 @@ const CollectionManager: React.FC = () => {
       ),
     },
     {
-      title: '文档数量',
-      dataIndex: 'count',
-      key: 'count',
-      render: (count: number) => (
-        <Tag color={count > 0 ? 'blue' : 'default'}>
-          {count} 个文档
-        </Tag>
-      ),
+      title: '文件数量',
+      dataIndex: 'files_count',
+      key: 'files_count',
+      render: (filesCount: number | undefined, record: CollectionInfo) => {
+        const count = filesCount || 0;
+        const totalChunks = record.chunk_statistics?.total_chunks || record.count;
+
+        return (
+          <div>
+            <Tag color={count > 0 ? 'blue' : 'default'}>
+              {count} 个文件
+            </Tag>
+            {count > 0 && totalChunks > 0 && (
+              <div style={{ fontSize: '11px', color: '#999', marginTop: 2 }}>
+                共 {totalChunks} 个块
+              </div>
+            )}
+          </div>
+        );
+      },
     },
     {
-      title: '元数据',
-      dataIndex: 'metadata',
-      key: 'metadata',
-      render: (metadata: Record<string, any>) => {
-        const keys = Object.keys(metadata);
-        if (keys.length === 0) {
-          return <Tag color="default">无</Tag>;
-        }
+      title: '向量信息',
+      key: 'vector_info',
+      render: (record: CollectionInfo) => {
+        const metadata = record.metadata || {};
+        const vectorDimension = metadata.vector_dimension;
+        const embeddingModel = metadata.embedding_model;
+
         return (
-          <Tooltip title={JSON.stringify(metadata, null, 2)}>
-            <Tag color="green">{keys.length} 个属性</Tag>
-          </Tooltip>
+          <div>
+            {vectorDimension && (
+              <div style={{ marginBottom: 4 }}>
+                <Tag color="purple">
+                  {vectorDimension}维向量
+                </Tag>
+              </div>
+            )}
+            {embeddingModel && (
+              <div>
+                <Tag color="green">
+                  {embeddingModel === 'alibaba-text-embedding-v4' ? '阿里云嵌入' :
+                   embeddingModel === 'text-embedding-ada-002' ? 'OpenAI嵌入' :
+                   embeddingModel.includes('alibaba') ? '阿里云' : '默认模型'}
+                </Tag>
+              </div>
+            )}
+            {!vectorDimension && !embeddingModel && (
+              <Tag color="default">未知配置</Tag>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      title: '分块信息',
+      key: 'chunk_info',
+      render: (record: CollectionInfo) => {
+        const chunkStats = record.chunk_statistics;
+        const methodsUsed = chunkStats?.methods_used || [];
+
+        return (
+          <div>
+            {methodsUsed.length > 0 ? (
+              methodsUsed.map((method, index) => (
+                <Tag key={index} color="orange" style={{ marginBottom: 2 }}>
+                  {method === 'recursive' ? '递归分块' :
+                   method === 'fixed_size' ? '固定分块' :
+                   method === 'semantic' ? '语义分块' : method}
+                </Tag>
+              ))
+            ) : (
+              <Tag color="default">未知方法</Tag>
+            )}
+          </div>
         );
       },
     },
     {
       title: '操作',
       key: 'actions',
+      width: 200,
+      fixed: 'right',
       render: (_: any, record: CollectionInfo) => (
         <Space>
           <Button
@@ -230,6 +294,12 @@ const CollectionManager: React.FC = () => {
           </Title>
           <div className="header-actions">
             <Button
+              icon={<SearchOutlined />}
+              onClick={() => navigate('/query')}
+            >
+              智能查询
+            </Button>
+            <Button
               icon={<ReloadOutlined />}
               onClick={fetchCollections}
               loading={loading}
@@ -254,7 +324,7 @@ const CollectionManager: React.FC = () => {
             dataSource={collections}
             rowKey="name"
             loading={loading}
-            scroll={{ y: 'calc(100vh - 280px)' }}
+            scroll={{ x: 1200, y: 'calc(100vh - 280px)' }}
             pagination={{
               showSizeChanger: true,
               showQuickJumper: true,

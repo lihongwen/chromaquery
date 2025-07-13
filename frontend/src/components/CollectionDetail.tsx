@@ -15,6 +15,16 @@ import {
   Spin,
   message,
   Breadcrumb,
+  Upload,
+  Modal,
+  Form,
+  Select,
+  InputNumber,
+  Divider,
+  Progress,
+  Alert,
+  Row,
+  Col,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -23,6 +33,9 @@ import {
   FileTextOutlined,
   CalendarOutlined,
   HomeOutlined,
+  UploadOutlined,
+  InboxOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -51,11 +64,49 @@ interface CollectionDetail {
   sample_documents: DocumentInfo[];
 }
 
+// RAG分块方式枚举
+enum ChunkingMethod {
+  RECURSIVE = 'recursive',
+  FIXED_SIZE = 'fixed_size',
+  SEMANTIC = 'semantic'
+}
+
+// RAG分块配置接口
+interface ChunkingConfig {
+  method: ChunkingMethod;
+  chunk_size: number;
+  chunk_overlap: number;
+  separators?: string[];
+  semantic_threshold?: number;
+}
+
+// 文档上传请求接口
+interface DocumentUploadRequest {
+  file: File;
+  chunking_config: ChunkingConfig;
+}
+
+// 上传进度接口
+interface UploadProgress {
+  percent: number;
+  status: 'uploading' | 'processing' | 'chunking' | 'embedding' | 'success' | 'error';
+  message: string;
+  chunks_created?: number;
+  total_chunks?: number;
+}
+
 const CollectionDetail: React.FC = () => {
   const { collectionName } = useParams<{ collectionName: string }>();
   const navigate = useNavigate();
   const [collectionDetail, setCollectionDetail] = useState<CollectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // 文档上传相关状态
+  const [uploadModalVisible, setUploadModalVisible] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [uploadForm] = Form.useForm();
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [chunkingMethod, setChunkingMethod] = useState<ChunkingMethod>(ChunkingMethod.RECURSIVE);
 
   // 获取集合详细信息
   const fetchCollectionDetail = async () => {
@@ -83,6 +134,238 @@ const CollectionDetail: React.FC = () => {
   // 返回集合列表
   const handleGoBack = () => {
     navigate('/');
+  };
+
+  // 处理文件选择
+  const handleFileSelect = (file: File) => {
+    // 检查文件类型
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+      message.error('只支持上传 .txt 格式的文件');
+      return false;
+    }
+
+    // 检查文件大小 (限制为10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      message.error('文件大小不能超过 10MB');
+      return false;
+    }
+
+    setSelectedFile(file);
+    return false; // 阻止自动上传
+  };
+
+  // 打开上传模态框
+  const openUploadModal = () => {
+    setUploadModalVisible(true);
+    setSelectedFile(null);
+    setUploadProgress(null);
+    uploadForm.resetFields();
+    setChunkingMethod(ChunkingMethod.RECURSIVE);
+  };
+
+  // 关闭上传模态框
+  const closeUploadModal = () => {
+    setUploadModalVisible(false);
+    setSelectedFile(null);
+    setUploadProgress(null);
+    uploadForm.resetFields();
+  };
+
+  // 获取分块方式的默认配置
+  const getDefaultChunkingConfig = (method: ChunkingMethod): Partial<ChunkingConfig> => {
+    switch (method) {
+      case ChunkingMethod.RECURSIVE:
+        return {
+          chunk_size: 1000,
+          chunk_overlap: 200,
+          separators: ['\n\n', '\n', '。', '！', '？', ';', ':', '，']
+        };
+      case ChunkingMethod.FIXED_SIZE:
+        return {
+          chunk_size: 500,
+          chunk_overlap: 50
+        };
+      case ChunkingMethod.SEMANTIC:
+        return {
+          chunk_size: 800,
+          chunk_overlap: 100,
+          semantic_threshold: 0.7
+        };
+      default:
+        return {
+          chunk_size: 1000,
+          chunk_overlap: 200
+        };
+    }
+  };
+
+  // 处理分块方式变化
+  const handleChunkingMethodChange = (method: ChunkingMethod) => {
+    setChunkingMethod(method);
+    const defaultConfig = getDefaultChunkingConfig(method);
+    uploadForm.setFieldsValue(defaultConfig);
+  };
+
+  // 处理文档上传
+  const handleDocumentUpload = async (values: any) => {
+    if (!selectedFile || !collectionName) {
+      message.error('请选择要上传的文件');
+      return;
+    }
+
+    try {
+      // 构建分块配置
+      const chunkingConfig: ChunkingConfig = {
+        method: chunkingMethod,
+        chunk_size: values.chunk_size,
+        chunk_overlap: values.chunk_overlap,
+        ...(chunkingMethod === ChunkingMethod.RECURSIVE && {
+          separators: values.separators || ['\n\n', '\n', '。', '！', '？', ';', ':', '，']
+        }),
+        ...(chunkingMethod === ChunkingMethod.SEMANTIC && {
+          semantic_threshold: values.semantic_threshold || 0.7
+        })
+      };
+
+      // 创建FormData
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('chunking_config', JSON.stringify(chunkingConfig));
+
+      // 设置初始上传进度
+      setUploadProgress({
+        percent: 0,
+        status: 'uploading',
+        message: '正在上传文件...'
+      });
+
+      // 模拟上传进度（实际项目中应该使用真实的上传进度）
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (!prev) return null;
+
+          let newPercent = prev.percent + 10;
+          let newStatus = prev.status;
+          let newMessage = prev.message;
+
+          if (newPercent >= 30 && prev.status === 'uploading') {
+            newStatus = 'processing';
+            newMessage = '正在处理文件内容...';
+          } else if (newPercent >= 50 && prev.status === 'processing') {
+            newStatus = 'chunking';
+            newMessage = '正在进行RAG分块...';
+          } else if (newPercent >= 80 && prev.status === 'chunking') {
+            newStatus = 'embedding';
+            newMessage = '正在生成向量嵌入...';
+          }
+
+          if (newPercent >= 100) {
+            clearInterval(progressInterval);
+            newPercent = 100;
+            newStatus = 'success';
+            newMessage = '上传完成！';
+          }
+
+          return {
+            ...prev,
+            percent: newPercent,
+            status: newStatus,
+            message: newMessage
+          };
+        });
+      }, 500);
+
+      // 实际的API调用
+      try {
+        const response = await axios.post(
+          `${API_BASE_URL}/collections/${encodeURIComponent(collectionName)}/upload`,
+          formData,
+          {
+            headers: {
+              'Content-Type': 'multipart/form-data'
+            }
+          }
+        );
+
+        clearInterval(progressInterval);
+        setUploadProgress({
+          percent: 100,
+          status: 'success',
+          message: '文档上传并处理完成！',
+          chunks_created: response.data.chunks_created,
+          total_chunks: response.data.chunks_created
+        });
+
+        message.success(`文档上传成功！创建了 ${response.data.chunks_created} 个文档块`);
+
+        // 3秒后关闭模态框并刷新数据
+        setTimeout(() => {
+          closeUploadModal();
+          fetchCollectionDetail();
+        }, 3000);
+
+      } catch (apiError: any) {
+        clearInterval(progressInterval);
+        console.error('API调用失败:', apiError);
+
+        setUploadProgress({
+          percent: 0,
+          status: 'error',
+          message: apiError.response?.data?.detail || '文档上传失败'
+        });
+        message.error('文档上传失败');
+      }
+
+    } catch (error: any) {
+      console.error('文档上传失败:', error);
+      setUploadProgress({
+        percent: 0,
+        status: 'error',
+        message: error.response?.data?.detail || '文档上传失败'
+      });
+      message.error('文档上传失败');
+    }
+  };
+
+  // 按文件分组文档数据
+  const getGroupedDocuments = () => {
+    if (!collectionDetail) return [];
+
+    const documents = collectionDetail.documents.length > 0
+      ? collectionDetail.documents
+      : collectionDetail.sample_documents;
+
+    // 按文件名分组
+    const fileGroups = new Map();
+
+    documents.forEach((doc, index) => {
+      const metadata = doc.metadata || {};
+      const fileName = metadata.file_name || metadata.source_file || `文档 #${index + 1}`;
+
+      if (!fileGroups.has(fileName)) {
+        fileGroups.set(fileName, {
+          fileName,
+          documents: [],
+          totalChunks: 0,
+          firstDoc: doc,
+          chunkMethod: metadata.chunk_method || '未知'
+        });
+      }
+
+      const group = fileGroups.get(fileName);
+      group.documents.push(doc);
+      group.totalChunks = metadata.total_chunks || group.documents.length;
+    });
+
+    // 转换为数组并添加索引
+    return Array.from(fileGroups.values()).map((group, index) => ({
+      ...group,
+      key: group.fileName,
+      index: index + 1,
+      // 使用第一个文档的内容作为预览
+      document: group.firstDoc.document,
+      metadata: group.firstDoc.metadata
+    }));
   };
 
   // 组件挂载时获取集合详情
@@ -156,6 +439,13 @@ const CollectionDetail: React.FC = () => {
           </div>
           <div className="header-actions">
             <Button
+              type="primary"
+              icon={<UploadOutlined />}
+              onClick={openUploadModal}
+            >
+              上传文档
+            </Button>
+            <Button
               icon={<ArrowLeftOutlined />}
               onClick={handleGoBack}
             >
@@ -197,11 +487,7 @@ const CollectionDetail: React.FC = () => {
                       )}
 
                       <Table
-                        dataSource={(collectionDetail.documents.length > 0 ? collectionDetail.documents : collectionDetail.sample_documents).map((doc, index) => ({
-                          ...doc,
-                          key: doc.id,
-                          index: index + 1
-                        }))}
+                        dataSource={getGroupedDocuments()}
                         columns={[
                           {
                             title: '序号',
@@ -216,15 +502,17 @@ const CollectionDetail: React.FC = () => {
                             )
                           },
                           {
-                            title: '文档ID',
-                            dataIndex: 'id',
-                            key: 'id',
+                            title: '文档名称',
+                            dataIndex: 'fileName',
+                            key: 'fileName',
                             width: 200,
                             responsive: ['md'],
-                            render: (id) => (
-                              <Text code style={{ fontSize: '12px' }}>
-                                {id}
-                              </Text>
+                            render: (fileName) => (
+                              <div style={{ fontSize: '12px' }}>
+                                <Text strong style={{ color: '#1890ff' }}>
+                                  {fileName}
+                                </Text>
+                              </div>
                             )
                           },
                           {
@@ -258,33 +546,40 @@ const CollectionDetail: React.FC = () => {
                             )
                           },
                           {
-                            title: '元数据',
-                            dataIndex: 'metadata',
-                            key: 'metadata',
-                            width: 200,
+                            title: '块数',
+                            dataIndex: 'totalChunks',
+                            key: 'chunks',
+                            width: 120,
                             responsive: ['lg'],
-                            render: (metadata) => (
-                              metadata && Object.keys(metadata).length > 0 ? (
-                                <div style={{
-                                  maxHeight: '80px',
-                                  overflow: 'auto',
-                                  fontSize: '11px',
-                                  fontFamily: 'Monaco, Consolas, monospace',
-                                  backgroundColor: '#f6f8fa',
-                                  padding: '4px 8px',
-                                  borderRadius: '3px',
-                                  border: '1px solid #e1e4e8'
-                                }}>
-                                  <pre style={{ margin: 0, color: '#586069' }}>
-                                    {JSON.stringify(metadata, null, 2)}
-                                  </pre>
+                            render: (totalChunks, record) => {
+                              const chunkMethod = record.chunkMethod;
+
+                              return (
+                                <div style={{ fontSize: '12px' }}>
+                                  <div>
+                                    <Text strong style={{ color: '#52c41a' }}>
+                                      总共拆分了{totalChunks}块
+                                    </Text>
+                                  </div>
+                                  {chunkMethod && chunkMethod !== '未知' && (
+                                    <div style={{ marginTop: 2 }}>
+                                      <Tag color="orange" style={{ fontSize: '9px' }}>
+                                        {chunkMethod === 'recursive' ? '递归分块' :
+                                         chunkMethod === 'fixed_size' ? '固定分块' :
+                                         chunkMethod === 'semantic' ? '语义分块' : chunkMethod}
+                                      </Tag>
+                                    </div>
+                                  )}
+                                  {record.metadata?.model && (
+                                    <div style={{ marginTop: 2 }}>
+                                      <Tag color="green" style={{ fontSize: '9px' }}>
+                                        {record.metadata.model === 'alibaba-text-embedding-v4' ? '阿里云' : '默认'}
+                                      </Tag>
+                                    </div>
+                                  )}
                                 </div>
-                              ) : (
-                                <Text type="secondary" style={{ fontSize: '12px' }}>
-                                  无元数据
-                                </Text>
-                              )
-                            )
+                              );
+                            }
                           },
                           {
                             title: '向量信息',
@@ -305,24 +600,39 @@ const CollectionDetail: React.FC = () => {
                             )
                           },
                           {
-                            title: '统计信息',
-                            key: 'stats',
-                            width: 150,
+                            title: '块信息',
+                            key: 'chunk_info',
+                            width: 120,
                             responsive: ['xl'],
-                            render: (_, record) => (
-                              <div style={{ fontSize: '11px' }}>
-                                <div>
-                                  <Text type="secondary">
-                                    字符: {record.document ? record.document.length : 0}
-                                  </Text>
+                            render: (_, record) => {
+                              const chunkMethod = record.metadata?.chunk_method || '未知';
+                              const chunkSize = record.metadata?.chunk_size;
+                              const textLength = record.document ? record.document.length : 0;
+
+                              return (
+                                <div style={{ fontSize: '11px' }}>
+                                  <div>
+                                    <Text type="secondary">
+                                      字符: {textLength}
+                                    </Text>
+                                  </div>
+                                  {chunkMethod !== '未知' && (
+                                    <div style={{ marginTop: 2 }}>
+                                      <Tag color="orange" style={{ fontSize: '9px' }}>
+                                        {chunkMethod === 'recursive' ? '递归' :
+                                         chunkMethod === 'fixed_size' ? '固定' :
+                                         chunkMethod === 'semantic' ? '语义' : chunkMethod}
+                                      </Tag>
+                                    </div>
+                                  )}
+                                  {chunkSize && (
+                                    <div style={{ marginTop: 2, color: '#999' }}>
+                                      块大小: {chunkSize}
+                                    </div>
+                                  )}
                                 </div>
-                                <div>
-                                  <Text type="secondary">
-                                    元数据: {record.metadata ? Object.keys(record.metadata).length : 0}项
-                                  </Text>
-                                </div>
-                              </div>
-                            )
+                              );
+                            }
                           }
                         ]}
                         pagination={{
@@ -364,14 +674,29 @@ const CollectionDetail: React.FC = () => {
                     </Descriptions.Item>
                     <Descriptions.Item label="向量维度">
                       <Space>
-                        <Tag color="purple">1024 维</Tag>
+                        <Tag color="purple">
+                          {collectionDetail.metadata?.vector_dimension || '未知'} 维
+                        </Tag>
                         <Text type="secondary" style={{ fontSize: '12px' }}>
-                          (ChromaDB 默认配置)
+                          {collectionDetail.metadata?.embedding_model === 'alibaba-text-embedding-v4'
+                            ? '(阿里云嵌入模型)'
+                            : '(ChromaDB 默认配置)'}
                         </Text>
                       </Space>
                     </Descriptions.Item>
                     <Descriptions.Item label="向量模型">
-                      <Text type="secondary">all-MiniLM-L6-v2 (默认)</Text>
+                      <Space>
+                        <Text>
+                          {collectionDetail.metadata?.embedding_model === 'alibaba-text-embedding-v4'
+                            ? 'text-embedding-v4'
+                            : 'all-MiniLM-L6-v2'}
+                        </Text>
+                        <Tag color={collectionDetail.metadata?.embedding_model === 'alibaba-text-embedding-v4' ? 'green' : 'default'}>
+                          {collectionDetail.metadata?.embedding_model === 'alibaba-text-embedding-v4'
+                            ? '阿里云'
+                            : '默认'}
+                        </Tag>
+                      </Space>
                     </Descriptions.Item>
                     {collectionDetail.created_time && (
                       <Descriptions.Item label="创建时间" span={2}>
@@ -399,6 +724,206 @@ const CollectionDetail: React.FC = () => {
           />
         </Card>
       </Content>
+
+      {/* 文档上传模态框 */}
+      <Modal
+        title={
+          <Space>
+            <UploadOutlined />
+            上传文档到集合：{collectionDetail?.display_name}
+          </Space>
+        }
+        open={uploadModalVisible}
+        onCancel={closeUploadModal}
+        footer={null}
+        width={800}
+        destroyOnClose
+      >
+        <Form
+          form={uploadForm}
+          layout="vertical"
+          onFinish={handleDocumentUpload}
+          initialValues={getDefaultChunkingConfig(ChunkingMethod.RECURSIVE)}
+        >
+          {/* 文件上传区域 */}
+          <Form.Item
+            label="选择文档文件"
+            required
+          >
+            <Upload.Dragger
+              name="file"
+              multiple={false}
+              beforeUpload={handleFileSelect}
+              showUploadList={false}
+              accept=".txt"
+            >
+              <p className="ant-upload-drag-icon">
+                <InboxOutlined />
+              </p>
+              <p className="ant-upload-text">
+                点击或拖拽文件到此区域上传
+              </p>
+              <p className="ant-upload-hint">
+                支持 .txt 格式文件，文件大小不超过 10MB
+              </p>
+            </Upload.Dragger>
+
+            {selectedFile && (
+              <Alert
+                message={`已选择文件: ${selectedFile.name}`}
+                description={`文件大小: ${(selectedFile.size / 1024).toFixed(2)} KB`}
+                type="success"
+                showIcon
+                style={{ marginTop: 12 }}
+              />
+            )}
+          </Form.Item>
+
+          <Divider orientation="left">
+            <Space>
+              <SettingOutlined />
+              RAG分块配置
+            </Space>
+          </Divider>
+
+          {/* RAG分块方式选择 */}
+          <Form.Item
+            label="分块方式"
+            required
+          >
+            <Select
+              value={chunkingMethod}
+              onChange={handleChunkingMethodChange}
+              style={{ width: '100%' }}
+            >
+              <Select.Option value={ChunkingMethod.RECURSIVE}>
+                递归分块 (Recursive Text Splitting)
+              </Select.Option>
+              <Select.Option value={ChunkingMethod.FIXED_SIZE}>
+                固定字数分块 (Fixed-size Chunking)
+              </Select.Option>
+              <Select.Option value={ChunkingMethod.SEMANTIC}>
+                语义分块 (Semantic Chunking)
+              </Select.Option>
+            </Select>
+          </Form.Item>
+
+          {/* 分块参数配置 */}
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="块大小 (字符数)"
+                name="chunk_size"
+                rules={[
+                  { required: true, message: '请输入块大小' },
+                  { type: 'number', min: 100, max: 4000, message: '块大小应在100-4000字符之间' }
+                ]}
+              >
+                <InputNumber
+                  style={{ width: '100%' }}
+                  placeholder="输入块大小"
+                  min={100}
+                  max={4000}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="重叠长度 (字符数)"
+                name="chunk_overlap"
+                rules={[
+                  { required: true, message: '请输入重叠长度' },
+                  { type: 'number', min: 0, max: 1000, message: '重叠长度应在0-1000字符之间' }
+                ]}
+              >
+                <InputNumber
+                  style={{ width: '100%' }}
+                  placeholder="输入重叠长度"
+                  min={0}
+                  max={1000}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          {/* 语义分块特有参数 */}
+          {chunkingMethod === ChunkingMethod.SEMANTIC && (
+            <Form.Item
+              label="语义相似度阈值"
+              name="semantic_threshold"
+              rules={[
+                { required: true, message: '请输入语义相似度阈值' },
+                { type: 'number', min: 0.1, max: 1.0, message: '阈值应在0.1-1.0之间' }
+              ]}
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                placeholder="输入语义相似度阈值"
+                min={0.1}
+                max={1.0}
+                step={0.1}
+              />
+            </Form.Item>
+          )}
+
+          {/* 分块方式说明 */}
+          <Alert
+            message={
+              chunkingMethod === ChunkingMethod.RECURSIVE
+                ? "递归分块：按照指定的分隔符（如段落、句子）递归地分割文本，保持语义完整性"
+                : chunkingMethod === ChunkingMethod.FIXED_SIZE
+                ? "固定字数分块：按照固定的字符数量分割文本，简单高效"
+                : "语义分块：基于语义相似度分割文本，保持语义连贯性，适合复杂文档"
+            }
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+
+          {/* 上传进度 */}
+          {uploadProgress && (
+            <div style={{ marginBottom: 16 }}>
+              <Progress
+                percent={uploadProgress.percent}
+                status={uploadProgress.status === 'error' ? 'exception' : 'active'}
+                strokeColor={
+                  uploadProgress.status === 'success' ? '#52c41a' :
+                  uploadProgress.status === 'error' ? '#ff4d4f' : '#1890ff'
+                }
+              />
+              <div style={{ marginTop: 8 }}>
+                <Text type={uploadProgress.status === 'error' ? 'danger' : 'secondary'}>
+                  {uploadProgress.message}
+                </Text>
+                {uploadProgress.chunks_created && (
+                  <div style={{ marginTop: 4 }}>
+                    <Text type="success">
+                      成功创建 {uploadProgress.chunks_created} 个文档块
+                    </Text>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 操作按钮 */}
+          <Form.Item>
+            <Space>
+              <Button
+                type="primary"
+                htmlType="submit"
+                disabled={!selectedFile || uploadProgress?.status === 'uploading'}
+                loading={uploadProgress?.status === 'uploading'}
+              >
+                {uploadProgress?.status === 'uploading' ? '上传中...' : '开始上传'}
+              </Button>
+              <Button onClick={closeUploadModal}>
+                取消
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
     </Layout>
   );
 };
