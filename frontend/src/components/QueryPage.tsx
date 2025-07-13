@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layout, Card, List, Input, Button, Select, Space, Typography, Spin, message, Empty } from 'antd';
-import { SearchOutlined, SendOutlined, MessageOutlined, DatabaseOutlined, ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Layout, Card, List, Input, Button, Select, Space, Typography, Spin, message, Empty, Alert, Result } from 'antd';
+import { SearchOutlined, SendOutlined, MessageOutlined, DatabaseOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
 const { Sider, Content } = Layout;
@@ -47,7 +47,12 @@ interface ConversationMessage {
   processing_time?: number;
 }
 
-const QueryPage: React.FC = () => {
+interface QueryPageProps {
+  hasCollections?: boolean | null;
+  onCollectionsChange?: () => void;
+}
+
+const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChange }) => {
   const navigate = useNavigate();
 
   // 添加CSS动画样式
@@ -462,6 +467,40 @@ const QueryPage: React.FC = () => {
     }
   }, [currentConversation]);
 
+  // 如果没有集合，显示提示页面
+  if (hasCollections === false) {
+    return (
+      <Layout style={{ height: '100vh' }}>
+        <Layout>
+          <Content style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+            <Result
+              icon={<DatabaseOutlined style={{ color: '#1890ff' }} />}
+              title="当前没有可用集合"
+              subTitle="智能查询功能需要至少一个集合才能使用，请先创建一个集合。"
+              extra={[
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => navigate('/collections')}
+                  key="create"
+                >
+                  创建集合
+                </Button>,
+                <Button
+                  icon={<ArrowLeftOutlined />}
+                  onClick={() => navigate('/collections')}
+                  key="back"
+                >
+                  返回集合管理
+                </Button>
+              ]}
+            />
+          </Content>
+        </Layout>
+      </Layout>
+    );
+  }
+
   return (
     <Layout style={{ height: '100vh' }}>
       {/* 左侧对话历史 */}
@@ -543,7 +582,7 @@ const QueryPage: React.FC = () => {
                 </Space>
                 <Button
                   icon={<ArrowLeftOutlined />}
-                  onClick={() => navigate('/')}
+                  onClick={() => navigate('/collections')}
                   type="text"
                 >
                   返回集合管理

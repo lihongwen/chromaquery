@@ -157,10 +157,25 @@ const CollectionManager: React.FC = () => {
       title: '集合名称',
       dataIndex: 'display_name',
       key: 'display_name',
+      width: '25%',
+      ellipsis: {
+        showTitle: false,
+      },
       render: (text: string) => (
         <Space>
           <DatabaseOutlined />
-          <strong>{text}</strong>
+          <strong
+            title={text}
+            style={{
+              maxWidth: '120px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              display: 'inline-block'
+            }}
+          >
+            {text}
+          </strong>
         </Space>
       ),
     },
@@ -168,18 +183,19 @@ const CollectionManager: React.FC = () => {
       title: '文件数量',
       dataIndex: 'files_count',
       key: 'files_count',
+      width: '18%',
       render: (filesCount: number | undefined, record: CollectionInfo) => {
         const count = filesCount || 0;
         const totalChunks = record.chunk_statistics?.total_chunks || record.count;
 
         return (
           <div>
-            <Tag color={count > 0 ? 'blue' : 'default'}>
-              {count} 个文件
+            <Tag color={count > 0 ? 'blue' : 'default'} size="small">
+              {count}文件
             </Tag>
             {count > 0 && totalChunks > 0 && (
               <div style={{ fontSize: '11px', color: '#999', marginTop: 2 }}>
-                共 {totalChunks} 个块
+                {totalChunks}块
               </div>
             )}
           </div>
@@ -189,6 +205,7 @@ const CollectionManager: React.FC = () => {
     {
       title: '向量信息',
       key: 'vector_info',
+      width: '18%',
       render: (record: CollectionInfo) => {
         const metadata = record.metadata || {};
         const vectorDimension = metadata.vector_dimension;
@@ -197,23 +214,19 @@ const CollectionManager: React.FC = () => {
         return (
           <div>
             {vectorDimension && (
-              <div style={{ marginBottom: 4 }}>
-                <Tag color="purple">
-                  {vectorDimension}维向量
-                </Tag>
-              </div>
+              <Tag color="purple" size="small" style={{ marginBottom: 2 }}>
+                {vectorDimension}维
+              </Tag>
             )}
             {embeddingModel && (
-              <div>
-                <Tag color="green">
-                  {embeddingModel === 'alibaba-text-embedding-v4' ? '阿里云嵌入' :
-                   embeddingModel === 'text-embedding-ada-002' ? 'OpenAI嵌入' :
-                   embeddingModel.includes('alibaba') ? '阿里云' : '默认模型'}
-                </Tag>
-              </div>
+              <Tag color="green" size="small">
+                {embeddingModel === 'alibaba-text-embedding-v4' ? '阿里云' :
+                 embeddingModel === 'text-embedding-ada-002' ? 'OpenAI' :
+                 embeddingModel.includes('alibaba') ? '阿里云' : '默认'}
+              </Tag>
             )}
             {!vectorDimension && !embeddingModel && (
-              <Tag color="default">未知配置</Tag>
+              <Tag color="default" size="small">未知</Tag>
             )}
           </div>
         );
@@ -222,6 +235,7 @@ const CollectionManager: React.FC = () => {
     {
       title: '分块信息',
       key: 'chunk_info',
+      width: '14%',
       render: (record: CollectionInfo) => {
         const chunkStats = record.chunk_statistics;
         const methodsUsed = chunkStats?.methods_used || [];
@@ -230,14 +244,14 @@ const CollectionManager: React.FC = () => {
           <div>
             {methodsUsed.length > 0 ? (
               methodsUsed.map((method, index) => (
-                <Tag key={index} color="orange" style={{ marginBottom: 2 }}>
-                  {method === 'recursive' ? '递归分块' :
-                   method === 'fixed_size' ? '固定分块' :
-                   method === 'semantic' ? '语义分块' : method}
+                <Tag key={index} color="orange" size="small" style={{ marginBottom: 2 }}>
+                  {method === 'recursive' ? '递归' :
+                   method === 'fixed_size' ? '固定' :
+                   method === 'semantic' ? '语义' : method}
                 </Tag>
               ))
             ) : (
-              <Tag color="default">未知方法</Tag>
+              <Tag color="default" size="small">未知</Tag>
             )}
           </div>
         );
@@ -246,21 +260,24 @@ const CollectionManager: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
-      width: 200,
-      fixed: 'right',
+      width: '25%',
       render: (_: any, record: CollectionInfo) => (
-        <Space>
+        <Space size="small">
           <Button
             type="link"
+            size="small"
             icon={<EyeOutlined />}
             onClick={() => handleViewCollection(record)}
+            title="查看集合详情"
           >
             查看
           </Button>
           <Button
             type="link"
+            size="small"
             icon={<EditOutlined />}
             onClick={() => openRenameModal(record)}
+            title="重命名集合"
           >
             重命名
           </Button>
@@ -273,8 +290,10 @@ const CollectionManager: React.FC = () => {
           >
             <Button
               type="link"
+              size="small"
               danger
               icon={<DeleteOutlined />}
+              title="删除集合"
             >
               删除
             </Button>
@@ -296,6 +315,8 @@ const CollectionManager: React.FC = () => {
             <Button
               icon={<SearchOutlined />}
               onClick={() => navigate('/query')}
+              disabled={collections.length === 0}
+              title={collections.length === 0 ? '请先创建一个集合' : '进入智能查询'}
             >
               智能查询
             </Button>
@@ -318,13 +339,38 @@ const CollectionManager: React.FC = () => {
       </Header>
 
       <Content>
+        {/* 智能查询提示 */}
+        {collections.length > 0 && (
+          <div style={{ marginBottom: '16px' }}>
+            <Card size="small" style={{ backgroundColor: '#f6ffed', border: '1px solid #b7eb8f' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <span style={{ color: '#52c41a' }}>
+                    <SearchOutlined style={{ marginRight: 8 }} />
+                    您已有 {collections.length} 个集合，可以使用智能查询功能进行文档检索和AI问答
+                  </span>
+                </div>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<SearchOutlined />}
+                  onClick={() => navigate('/query')}
+                >
+                  立即体验
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
         <Card>
           <Table
             columns={columns}
             dataSource={collections}
             rowKey="name"
             loading={loading}
-            scroll={{ x: 1200, y: 'calc(100vh - 280px)' }}
+            scroll={{ y: 'calc(100vh - 280px)' }}
+            tableLayout="fixed"
             pagination={{
               showSizeChanger: true,
               showQuickJumper: true,
