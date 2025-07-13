@@ -5,13 +5,13 @@ ChromaDB Web Manager - 后端主应用
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import chromadb
 from chromadb.config import Settings
 import chromadb.utils.embedding_functions as ef
 import uvicorn
 import logging
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator
 import base64
 import hashlib
 from pydantic import BaseModel
@@ -21,7 +21,10 @@ from alibaba_embedding import create_alibaba_embedding_function
 from fastapi import UploadFile, File, Form
 import tempfile
 import time
+import json
+import asyncio
 from rag_chunking import RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config
+from llm_client import get_llm_client, init_llm_client
 
 # 加载环境变量
 load_dotenv()
@@ -153,10 +156,31 @@ class QueryResponse(BaseModel):
     total_results: int
     processing_time: float
 
+# LLM查询相关数据模型
+class LLMQueryRequest(BaseModel):
+    query: str
+    collections: List[str]
+    limit: Optional[int] = 5
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 2000
+
+class LLMStreamChunk(BaseModel):
+    content: str
+    finish_reason: Optional[str] = None
+    usage: Optional[dict] = None
+
+class LLMQueryResponse(BaseModel):
+    query: str
+    answer: str
+    context_results: List[QueryResult]
+    processing_time: float
+    model_info: dict
+
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化ChromaDB客户端"""
+    """应用启动时初始化ChromaDB客户端和LLM客户端"""
     init_chroma_client()
+    init_llm_client()
 
 @app.get("/")
 async def root():
@@ -873,8 +897,8 @@ async def query_collections(request: QueryRequest):
                         distance = search_results['distances'][0][i] if search_results.get('distances') else 0.0
                         similarity = 1 - distance
 
-                        # 只添加相似度大于0的结果（即distance < 1的结果）
-                        if similarity > 0:
+                        # 只添加相似度合理的结果（distance < 2.0表示有一定相关性）
+                        if distance < 2.0:
                             result = QueryResult(
                                 id=doc_id,
                                 document=search_results['documents'][0][i] if search_results.get('documents') else "",
@@ -909,6 +933,148 @@ async def query_collections(request: QueryRequest):
     except Exception as e:
         logger.error(f"查询失败: {e}")
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+@app.post("/api/llm-query")
+async def llm_query(request: LLMQueryRequest):
+    """
+    LLM智能查询接口
+    结合ChromaDB向量查询和LLM生成回答
+    """
+    start_time = time.time()
+
+    try:
+        if not request.query.strip():
+            raise HTTPException(status_code=400, detail="查询内容不能为空")
+
+        if not request.collections:
+            raise HTTPException(status_code=400, detail="请选择至少一个集合")
+
+        # 1. 执行ChromaDB向量查询
+        logger.info(f"开始向量查询: {request.query}")
+
+        # 验证集合是否存在
+        existing_collections = chroma_client.list_collections()
+        collection_map = {}
+
+        for collection in existing_collections:
+            metadata = collection.metadata or {}
+            display_name = metadata.get('original_name', collection.name)
+            collection_map[display_name] = collection
+
+        # 检查请求的集合是否都存在
+        missing_collections = []
+        target_collections = []
+
+        for collection_name in request.collections:
+            if collection_name in collection_map:
+                target_collections.append((collection_name, collection_map[collection_name]))
+            else:
+                missing_collections.append(collection_name)
+
+        if missing_collections:
+            raise HTTPException(
+                status_code=404,
+                detail=f"以下集合不存在: {', '.join(missing_collections)}"
+            )
+
+        # 生成查询向量
+        query_embedding = None
+        try:
+            embedding_function = create_alibaba_embedding_function()
+            query_embedding = embedding_function([request.query])[0]
+            logger.info(f"查询向量生成成功，维度: {len(query_embedding)}")
+        except Exception as e:
+            logger.warning(f"查询向量生成失败，将使用文本查询: {e}")
+
+        # 在每个集合中进行查询
+        all_results = []
+
+        for collection_name, collection in target_collections:
+            try:
+                # 执行向量查询
+                if query_embedding:
+                    search_results = collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=request.limit,
+                        include=['documents', 'metadatas', 'distances']
+                    )
+                else:
+                    search_results = collection.query(
+                        query_texts=[request.query],
+                        n_results=request.limit,
+                        include=['documents', 'metadatas', 'distances']
+                    )
+
+                # 处理查询结果
+                if search_results['documents'] and search_results['documents'][0]:
+                    for i in range(len(search_results['documents'][0])):
+                        distance = search_results['distances'][0][i]
+
+                        # 过滤相似度过低的结果 (distance < 2.0 表示有一定相关性)
+                        if distance < 2.0:
+                            result_data = {
+                                'id': f"{collection_name}_{i}_{int(time.time() * 1000)}",
+                                'document': search_results['documents'][0][i],
+                                'metadata': search_results['metadatas'][0][i] or {},
+                                'distance': distance,
+                                'collection_name': collection_name
+                            }
+                            all_results.append(result_data)
+
+            except Exception as e:
+                logger.error(f"在集合 {collection_name} 中查询失败: {e}")
+                continue
+
+        # 按相似度排序并限制结果数量
+        all_results.sort(key=lambda x: x['distance'])
+        final_results = all_results[:request.limit]
+
+        logger.info(f"向量查询完成，找到 {len(final_results)} 个结果")
+
+        # 2. 调用LLM生成流式响应
+        async def generate_stream():
+            try:
+                llm_client = get_llm_client()
+
+                async for chunk in llm_client.query_with_context(
+                    query_results=final_results,
+                    user_query=request.query,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens
+                ):
+                    # 格式化为Server-Sent Events格式
+                    data = json.dumps(chunk, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
+
+                    # 如果完成或出错，结束流
+                    if chunk.get('finish_reason'):
+                        break
+
+            except Exception as e:
+                error_chunk = {
+                    'content': '',
+                    'finish_reason': 'error',
+                    'error': f"LLM处理失败: {str(e)}"
+                }
+                data = json.dumps(error_chunk, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"LLM查询失败: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM查询失败: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

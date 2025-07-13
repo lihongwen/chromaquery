@@ -41,10 +41,29 @@ interface ConversationMessage {
   timestamp: string;
   query_results?: QueryResult[];
   selected_collections?: string[];
+  // LLM相关字段
+  llm_response?: string;
+  is_streaming?: boolean;
+  processing_time?: number;
 }
 
 const QueryPage: React.FC = () => {
   const navigate = useNavigate();
+
+  // 添加CSS动画样式
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes blink {
+        0%, 50% { opacity: 1; }
+        51%, 100% { opacity: 0; }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
 
   // 状态管理
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -55,6 +74,7 @@ const QueryPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
 
   // 用于滚动到最新消息的引用
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -151,6 +171,194 @@ const QueryPage: React.FC = () => {
     }, 100);
   };
 
+  // 处理流式LLM响应
+  const handleStreamingResponse = async (
+    conversation: Conversation,
+    userMessage: ConversationMessage,
+    queryText: string,
+    selectedCollections: string[]
+  ) => {
+    const assistantMessageId = `msg_${Date.now()}_assistant`;
+    setStreamingMessageId(assistantMessageId);
+
+    // 创建初始的助手消息
+    const assistantMessage: ConversationMessage = {
+      id: assistantMessageId,
+      type: 'assistant',
+      content: '正在思考中...',
+      timestamp: new Date().toISOString(),
+      llm_response: '',
+      is_streaming: true
+    };
+
+    const updatedConversation = {
+      ...conversation,
+      messages: [...conversation.messages, userMessage, assistantMessage]
+    };
+
+    setCurrentConversation(updatedConversation);
+    setConversations(prev =>
+      prev.map(conv => conv.id === conversation.id ? updatedConversation : conv)
+    );
+
+    try {
+      // 调用新的LLM查询API（流式响应）
+      const response = await fetch(`${API_BASE_URL}/llm-query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: queryText,
+          collections: selectedCollections,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedResponse = '';
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.content) {
+                  accumulatedResponse += data.content;
+
+                  // 更新消息内容
+                  setCurrentConversation(prev => {
+                    if (!prev) return prev;
+                    const updatedMessages = prev.messages.map(msg =>
+                      msg.id === assistantMessageId
+                        ? {
+                            ...msg,
+                            llm_response: accumulatedResponse,
+                            content: '智能回答：',
+                            is_streaming: true
+                          }
+                        : msg
+                    );
+                    return { ...prev, messages: updatedMessages };
+                  });
+
+                  setConversations(prev =>
+                    prev.map(conv => {
+                      if (conv.id === conversation.id) {
+                        const updatedMessages = conv.messages.map(msg =>
+                          msg.id === assistantMessageId
+                            ? {
+                                ...msg,
+                                llm_response: accumulatedResponse,
+                                content: '智能回答：',
+                                is_streaming: true
+                              }
+                            : msg
+                        );
+                        return { ...conv, messages: updatedMessages };
+                      }
+                      return conv;
+                    })
+                  );
+                }
+              } catch (e) {
+                console.error('解析流式数据失败:', e);
+              }
+            }
+          }
+        }
+      }
+
+      // 流式响应完成
+      setCurrentConversation(prev => {
+        if (!prev) return prev;
+        const updatedMessages = prev.messages.map(msg =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                is_streaming: false,
+                content: '智能回答：'
+              }
+            : msg
+        );
+        return { ...prev, messages: updatedMessages };
+      });
+
+      setConversations(prev =>
+        prev.map(conv => {
+          if (conv.id === conversation.id) {
+            const updatedMessages = conv.messages.map(msg =>
+              msg.id === assistantMessageId
+                ? {
+                    ...msg,
+                    is_streaming: false,
+                    content: '智能回答：'
+                  }
+                : msg
+            );
+            return { ...conv, messages: updatedMessages };
+          }
+          return conv;
+        })
+      );
+
+    } catch (error: any) {
+      console.error('LLM查询失败:', error);
+      const errorMessage = error.message || 'LLM查询失败';
+
+      // 更新为错误消息
+      setCurrentConversation(prev => {
+        if (!prev) return prev;
+        const updatedMessages = prev.messages.map(msg =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content: `查询失败: ${errorMessage}`,
+                is_streaming: false,
+                llm_response: undefined
+              }
+            : msg
+        );
+        return { ...prev, messages: updatedMessages };
+      });
+
+      setConversations(prev =>
+        prev.map(conv => {
+          if (conv.id === conversation.id) {
+            const updatedMessages = conv.messages.map(msg =>
+              msg.id === assistantMessageId
+                ? {
+                    ...msg,
+                    content: `查询失败: ${errorMessage}`,
+                    is_streaming: false,
+                    llm_response: undefined
+                  }
+                : msg
+            );
+            return { ...conv, messages: updatedMessages };
+          }
+          return conv;
+        })
+      );
+
+      message.error(errorMessage);
+    } finally {
+      setStreamingMessageId(null);
+      scrollToLatestMessage();
+    }
+  };
+
   // 发送查询
   const handleQuery = async () => {
     if (!queryText.trim()) {
@@ -196,79 +404,17 @@ const QueryPage: React.FC = () => {
       selected_collections: [...selectedCollections]
     };
 
-    const updatedConversation = {
-      ...conversation,
-      messages: [...conversation.messages, userMessage]
-    };
-
-    setCurrentConversation(updatedConversation);
-    setConversations(prev => 
-      prev.map(conv => conv.id === conversation!.id ? updatedConversation : conv)
-    );
-
     setLoading(true);
 
+    // 清空输入框
+    setQueryText('');
+
     try {
-      // 调用查询API
-      const response = await axios.post(`${API_BASE_URL}/query`, {
-        query: queryText,
-        collections: selectedCollections,
-        limit: 5
-      });
-
-      // 添加助手回复
-      const results = response.data.results || [];
-      const assistantMessage: ConversationMessage = {
-        id: `msg_${Date.now()}_assistant`,
-        type: 'assistant',
-        content: results.length > 0
-          ? `找到 ${results.length} 个相关结果（处理时间: ${(response.data.processing_time * 1000).toFixed(0)}ms）`
-          : `未找到相关结果（处理时间: ${(response.data.processing_time * 1000).toFixed(0)}ms）`,
-        timestamp: new Date().toISOString(),
-        query_results: results
-      };
-
-      const finalConversation = {
-        ...updatedConversation,
-        messages: [...updatedConversation.messages, assistantMessage]
-      };
-
-      setCurrentConversation(finalConversation);
-      setConversations(prev =>
-        prev.map(conv => conv.id === conversation!.id ? finalConversation : conv)
-      );
-
-      // 清空输入框
-      setQueryText('');
-
-      // 滚动到最新消息
-      scrollToLatestMessage();
-
+      // 调用流式LLM响应处理
+      await handleStreamingResponse(conversation, userMessage, queryText, selectedCollections);
     } catch (error: any) {
-      console.error('查询失败:', error);
-      const errorMessage = error.response?.data?.detail || '查询失败';
-      message.error(errorMessage);
-
-      // 添加错误消息
-      const errorAssistantMessage: ConversationMessage = {
-        id: `msg_${Date.now()}_assistant`,
-        type: 'assistant',
-        content: `查询失败: ${errorMessage}`,
-        timestamp: new Date().toISOString()
-      };
-
-      const errorConversation = {
-        ...updatedConversation,
-        messages: [...updatedConversation.messages, errorAssistantMessage]
-      };
-
-      setCurrentConversation(errorConversation);
-      setConversations(prev =>
-        prev.map(conv => conv.id === conversation!.id ? errorConversation : conv)
-      );
-
-      // 滚动到最新消息（包括错误消息）
-      scrollToLatestMessage();
+      console.error('处理查询失败:', error);
+      message.error('处理查询失败');
     } finally {
       setLoading(false);
     }
@@ -443,11 +589,112 @@ const QueryPage: React.FC = () => {
                                   查询集合: {message.selected_collections.join(', ')}
                                 </div>
                               )}
+
+                              {/* LLM回答显示 */}
+                              {message.llm_response && (
+                                <div style={{
+                                  marginTop: '12px',
+                                  padding: '12px',
+                                  backgroundColor: message.type === 'user' ? 'rgba(255,255,255,0.1)' : '#fff',
+                                  borderRadius: '8px',
+                                  border: message.type === 'user' ? '1px solid rgba(255,255,255,0.2)' : '1px solid #e8e8e8'
+                                }}>
+                                  <div style={{
+                                    whiteSpace: 'pre-wrap',
+                                    lineHeight: '1.6',
+                                    color: message.type === 'user' ? '#fff' : '#000'
+                                  }}>
+                                    {message.llm_response}
+                                    {message.is_streaming && (
+                                      <span style={{
+                                        display: 'inline-block',
+                                        width: '8px',
+                                        height: '20px',
+                                        backgroundColor: message.type === 'user' ? '#fff' : '#1890ff',
+                                        marginLeft: '2px',
+                                        animation: 'blink 1s infinite'
+                                      }} />
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* 参考资料展示 - 当有LLM回答时作为可展开的参考资料 */}
+                              {message.llm_response && message.query_results && message.query_results.length > 0 && (
+                                <div style={{ marginTop: '8px' }}>
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    style={{ padding: '0', height: 'auto', color: message.type === 'user' ? '#fff' : '#1890ff' }}
+                                    onClick={() => {
+                                      const referenceKey = `reference_${message.id}`;
+                                      setExpandedResults(prev => {
+                                        const newSet = new Set(prev);
+                                        if (newSet.has(referenceKey)) {
+                                          newSet.delete(referenceKey);
+                                        } else {
+                                          newSet.add(referenceKey);
+                                        }
+                                        return newSet;
+                                      });
+                                    }}
+                                  >
+                                    {expandedResults.has(`reference_${message.id}`) ? '收起参考资料' : `查看参考资料 (${message.query_results.length}条)`}
+                                  </Button>
+
+                                  {expandedResults.has(`reference_${message.id}`) && (
+                                    <div style={{
+                                      marginTop: '8px',
+                                      maxHeight: '300px',
+                                      overflowY: 'auto',
+                                      border: message.type === 'user' ? '1px solid rgba(255,255,255,0.3)' : '1px solid #e8e8e8',
+                                      borderRadius: '6px',
+                                      padding: '8px'
+                                    }}>
+                                      {message.query_results.map((result, index) => (
+                                        <div key={result.id} style={{
+                                          marginBottom: index < message.query_results!.length - 1 ? '8px' : '0',
+                                          paddingBottom: index < message.query_results!.length - 1 ? '8px' : '0',
+                                          borderBottom: index < message.query_results!.length - 1 ? `1px solid ${message.type === 'user' ? 'rgba(255,255,255,0.2)' : '#f0f0f0'}` : 'none'
+                                        }}>
+                                          <div style={{
+                                            fontSize: '12px',
+                                            color: message.type === 'user' ? 'rgba(255,255,255,0.8)' : '#666',
+                                            marginBottom: '4px'
+                                          }}>
+                                            #{index + 1} • 相似度: {((1 - result.distance) * 100).toFixed(1)}% • {result.collection_name}
+                                          </div>
+                                          <div style={{
+                                            fontSize: '13px',
+                                            color: message.type === 'user' ? 'rgba(255,255,255,0.9)' : '#333',
+                                            lineHeight: '1.4'
+                                          }}>
+                                            {result.document.length > 150
+                                              ? `${result.document.substring(0, 150)}...`
+                                              : result.document
+                                            }
+                                          </div>
+                                          {result.metadata.file_name && (
+                                            <div style={{
+                                              fontSize: '11px',
+                                              color: message.type === 'user' ? 'rgba(255,255,255,0.7)' : '#999',
+                                              marginTop: '2px'
+                                            }}>
+                                              📄 {result.metadata.file_name}
+                                              {result.metadata.chunk_index !== undefined && ` • 块 ${result.metadata.chunk_index + 1}`}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
                           
-                          {/* 查询结果展示 */}
-                          {message.query_results && message.query_results.length > 0 ? (
+                          {/* 查询结果展示 - 只在没有LLM回答时显示，或作为可展开的参考资料 */}
+                          {message.query_results && message.query_results.length > 0 && !message.llm_response ? (
                             <div style={{ marginTop: '12px' }}>
                               <Title level={5}>查询结果:</Title>
                               <List
