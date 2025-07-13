@@ -111,15 +111,31 @@ const QueryPage: React.FC = () => {
 
   // 滚动到最新消息（让最新消息显示在对话框顶部）
   const scrollToLatestMessage = () => {
-    // 使用setTimeout确保DOM已更新
+    // 使用更长的延迟确保DOM完全更新，包括查询结果的渲染
     setTimeout(() => {
       if (latestMessageRef.current) {
-        latestMessageRef.current.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start'  // 让最新消息显示在可视区域的顶部
-        });
+        console.log('滚动到最新消息:', latestMessageRef.current);
+        // 获取对话容器和最新消息的位置信息
+        const container = conversationContentRef.current;
+        const latestMessage = latestMessageRef.current;
+
+        if (container && latestMessage) {
+          // 计算最新消息相对于容器的位置
+          const containerRect = container.getBoundingClientRect();
+          const messageRect = latestMessage.getBoundingClientRect();
+
+          // 计算需要滚动的距离，让最新消息显示在容器顶部
+          const scrollTop = container.scrollTop + (messageRect.top - containerRect.top);
+
+          container.scrollTo({
+            top: scrollTop,
+            behavior: 'smooth'
+          });
+        }
+      } else {
+        console.log('latestMessageRef.current 为空');
       }
-    }, 100);
+    }, 300);  // 增加延迟时间到300ms
   };
 
   // 滚动到对话开头
