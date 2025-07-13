@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout, Card, List, Input, Button, Select, Space, Typography, Spin, message, Empty } from 'antd';
 import { SearchOutlined, SendOutlined, MessageOutlined, DatabaseOutlined, ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons';
@@ -56,6 +56,10 @@ const QueryPage: React.FC = () => {
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
 
+  // 用于滚动到最新消息的引用
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const conversationContentRef = useRef<HTMLDivElement>(null);
+
   // 获取集合列表
   const fetchCollections = async () => {
     setCollectionsLoading(true);
@@ -102,6 +106,19 @@ const QueryPage: React.FC = () => {
       }
       return newSet;
     });
+  };
+
+  // 滚动到最新消息
+  const scrollToLatestMessage = () => {
+    // 使用setTimeout确保DOM已更新
+    setTimeout(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'end'
+        });
+      }
+    }, 100);
   };
 
   // 发送查询
@@ -187,12 +204,15 @@ const QueryPage: React.FC = () => {
       };
 
       setCurrentConversation(finalConversation);
-      setConversations(prev => 
+      setConversations(prev =>
         prev.map(conv => conv.id === conversation!.id ? finalConversation : conv)
       );
 
       // 清空输入框
       setQueryText('');
+
+      // 滚动到最新消息
+      scrollToLatestMessage();
 
     } catch (error: any) {
       console.error('查询失败:', error);
@@ -213,9 +233,12 @@ const QueryPage: React.FC = () => {
       };
 
       setCurrentConversation(errorConversation);
-      setConversations(prev => 
+      setConversations(prev =>
         prev.map(conv => conv.id === conversation!.id ? errorConversation : conv)
       );
+
+      // 滚动到最新消息（包括错误消息）
+      scrollToLatestMessage();
     } finally {
       setLoading(false);
     }
@@ -255,6 +278,13 @@ const QueryPage: React.FC = () => {
       saveConversations(conversations);
     }
   }, [conversations]);
+
+  // 当切换对话时，自动滚动到最新消息
+  useEffect(() => {
+    if (currentConversation && currentConversation.messages.length > 0) {
+      scrollToLatestMessage();
+    }
+  }, [currentConversation]);
 
   return (
     <Layout style={{ height: '100vh' }}>
@@ -348,7 +378,10 @@ const QueryPage: React.FC = () => {
             bodyStyle={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px' }}
           >
             {currentConversation ? (
-              <div style={{ flex: 1, overflowY: 'auto', marginBottom: '16px' }}>
+              <div
+                ref={conversationContentRef}
+                style={{ flex: 1, overflowY: 'auto', marginBottom: '16px' }}
+              >
                 {currentConversation.messages.length === 0 ? (
                   <Empty description="开始新的查询对话" />
                 ) : (
@@ -451,6 +484,8 @@ const QueryPage: React.FC = () => {
                     )}
                   />
                 )}
+                {/* 滚动到最新消息的标记 */}
+                <div ref={messagesEndRef} />
               </div>
             ) : (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
