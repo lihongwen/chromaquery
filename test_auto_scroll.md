@@ -32,14 +32,15 @@
 
 ### 正确的滚动行为：
 - ✅ 切换对话时，自动滚动到该对话的**第一条消息**（对话开头）
-- ✅ 发送新查询后，自动滚动到新消息（对话底部）
-- ✅ 查询出错时，也会滚动到错误消息
+- ✅ 发送新查询后，**新消息显示在对话框的最上方**（让用户立即看到新内容）
+- ✅ 查询出错时，错误消息也显示在对话框最上方
 - ✅ 滚动动画平滑自然
 - ✅ 不影响其他功能（查询、展开/收起、对话管理等）
 
 ### 错误的行为：
 - ❌ 切换对话时滚动到对话底部而不是开头
-- ❌ 发送查询后需要手动滚动才能看到结果
+- ❌ 发送查询后新消息显示在对话框底部，需要手动滚动才能看到
+- ❌ 新消息被隐藏在可视区域之外
 - ❌ 滚动过于突兀或不平滑
 - ❌ 影响其他功能的正常使用
 
@@ -51,11 +52,16 @@
    - `conversationContentRef`：对话内容容器
 
 2. **滚动函数**：
-   - `scrollToLatestMessage()`：平滑滚动到最新消息（用于新查询）
+   - `scrollToLatestMessage()`：让最新消息显示在对话框顶部（使用`block: 'start'`）
    - `scrollToConversationTop()`：平滑滚动到对话开头（用于对话切换）
    - 使用`setTimeout`确保DOM更新完成
 
-3. **触发时机**：
+3. **引用管理**：
+   - `latestMessageRef`：指向最新消息的div元素
+   - `conversationContentRef`：指向对话内容容器
+   - `messagesEndRef`：标记消息列表末尾（保留备用）
+
+4. **触发时机**：
    - `useEffect`监听`currentConversation`变化时调用`scrollToConversationTop()`
    - 查询成功后调用`scrollToLatestMessage()`
    - 查询失败后调用`scrollToLatestMessage()`
