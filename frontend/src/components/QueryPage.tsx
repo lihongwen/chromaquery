@@ -59,6 +59,7 @@ const QueryPage: React.FC = () => {
   // 用于滚动到最新消息的引用
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationContentRef = useRef<HTMLDivElement>(null);
+  const latestMessageRef = useRef<HTMLDivElement>(null);
 
   // 获取集合列表
   const fetchCollections = async () => {
@@ -108,14 +109,14 @@ const QueryPage: React.FC = () => {
     });
   };
 
-  // 滚动到最新消息
+  // 滚动到最新消息（让最新消息显示在对话框顶部）
   const scrollToLatestMessage = () => {
     // 使用setTimeout确保DOM已更新
     setTimeout(() => {
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({
+      if (latestMessageRef.current) {
+        latestMessageRef.current.scrollIntoView({
           behavior: 'smooth',
-          block: 'end'
+          block: 'start'  // 让最新消息显示在可视区域的顶部
         });
       }
     }, 100);
@@ -400,9 +401,14 @@ const QueryPage: React.FC = () => {
                 ) : (
                   <List
                     dataSource={currentConversation.messages}
-                    renderItem={(message) => (
-                      <List.Item style={{ border: 'none', padding: '8px 0' }}>
-                        <div style={{ width: '100%' }}>
+                    renderItem={(message, index) => {
+                      const isLatestMessage = index === currentConversation.messages.length - 1;
+                      return (
+                        <List.Item style={{ border: 'none', padding: '8px 0' }}>
+                          <div
+                            style={{ width: '100%' }}
+                            ref={isLatestMessage ? latestMessageRef : null}
+                          >
                           <div style={{
                             display: 'flex',
                             justifyContent: message.type === 'user' ? 'flex-end' : 'flex-start',
@@ -492,9 +498,10 @@ const QueryPage: React.FC = () => {
                               <Text type="secondary">未找到相关结果，请尝试调整查询内容或选择其他集合</Text>
                             </div>
                           )}
-                        </div>
-                      </List.Item>
-                    )}
+                          </div>
+                        </List.Item>
+                      );
+                    }}
                   />
                 )}
                 {/* 滚动到最新消息的标记 */}
