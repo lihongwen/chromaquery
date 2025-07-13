@@ -41,11 +41,13 @@ cd chromadb-web-manager
 
 2. 后端设置
 ```bash
-cd backend
-uv venv
+# 在项目根目录创建虚拟环境
+uv venv .venv
 source .venv/bin/activate  # Linux/Mac
 # 或 .venv\Scripts\activate  # Windows
-uv pip install -r requirements.txt
+
+# 安装Python依赖（使用中国镜像源）
+uv pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r backend/requirements.txt
 ```
 
 3. 前端设置
@@ -58,9 +60,10 @@ npm install
 
 后端：
 ```bash
-cd backend
+# 激活虚拟环境（在项目根目录）
 source .venv/bin/activate
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# 启动后端服务
+python backend/main.py
 ```
 
 前端：
