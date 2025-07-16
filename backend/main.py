@@ -176,6 +176,12 @@ class LLMQueryResponse(BaseModel):
     processing_time: float
     model_info: dict
 
+class DeleteDocumentResponse(BaseModel):
+    message: str
+    file_name: str
+    deleted_chunks: int
+    collection_name: str
+
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化ChromaDB客户端和LLM客户端"""
@@ -221,7 +227,7 @@ async def get_collections():
                 count = 0
 
             # 获取文件统计信息
-            files_count = None
+            files_count = 0  # 默认为0而不是None
             chunk_statistics = None
             try:
                 if count > 0:
@@ -248,8 +254,22 @@ async def get_collections():
                             'files_count': files_count,
                             'methods_used': list(methods_used)
                         }
+                else:
+                    # 对于空集合，设置基本的统计信息
+                    chunk_statistics = {
+                        'total_chunks': 0,
+                        'files_count': 0,
+                        'methods_used': []
+                    }
             except Exception as e:
                 logger.warning(f"获取集合 {collection.name} 的文件统计信息失败: {e}")
+                # 即使出错也要确保有基本的统计信息
+                files_count = 0
+                chunk_statistics = {
+                    'total_chunks': count,
+                    'files_count': 0,
+                    'methods_used': []
+                }
 
             result.append(CollectionInfo(
                 name=collection.name,  # 原始编码名称
@@ -710,8 +730,22 @@ async def upload_document(
                 alibaba_embedding_func = create_alibaba_embedding_function(dimension=1024)
                 logger.info(f"为集合 '{collection_name}' 重新创建阿里云嵌入函数")
 
-                # 使用阿里云嵌入函数生成向量
-                embeddings = alibaba_embedding_func(documents)
+                # 使用阿里云嵌入函数生成向量，支持批量处理
+                embeddings = []
+                batch_size = 10  # 阿里云API限制
+
+                for i in range(0, len(documents), batch_size):
+                    batch = documents[i:i + batch_size]
+                    logger.info(f"处理文档批次 {i//batch_size + 1}: {len(batch)} 个文档")
+
+                    try:
+                        batch_embeddings = alibaba_embedding_func(batch)
+                        embeddings.extend(batch_embeddings)
+                        logger.info(f"成功生成批次 {i//batch_size + 1} 的嵌入向量")
+                    except Exception as e:
+                        logger.error(f"批次 {i//batch_size + 1} 嵌入向量生成失败: {e}")
+                        raise e
+
                 logger.info(f"成功生成 {len(embeddings)} 个1024维向量")
 
             except Exception as e:
@@ -755,6 +789,67 @@ async def upload_document(
     except Exception as e:
         logger.error(f"文档上传失败: {e}")
         raise HTTPException(status_code=500, detail=f"文档上传失败: {str(e)}")
+
+@app.delete("/api/collections/{collection_name}/documents/{file_name}", response_model=DeleteDocumentResponse)
+async def delete_document_by_filename(collection_name: str, file_name: str):
+    """删除指定文件名的所有文档块"""
+    try:
+        # 查找集合
+        collections = chroma_client.list_collections()
+        target_collection = None
+
+        for collection in collections:
+            metadata = collection.metadata or {}
+            # 支持通过原始名称或编码名称查找
+            if (metadata.get('original_name') == collection_name or
+                collection.name == collection_name):
+                target_collection = collection
+                break
+
+        if not target_collection:
+            raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
+
+        # 获取该文件的所有文档块
+        try:
+            # 获取所有文档
+            results = target_collection.get(include=['metadatas'])
+            
+            if not results or not results.get('ids'):
+                raise HTTPException(status_code=404, detail=f"集合中没有找到文档")
+
+            # 找到属于指定文件的所有文档块
+            target_ids = []
+            for i, doc_id in enumerate(results['ids']):
+                doc_metadata = results['metadatas'][i] if results.get('metadatas') else {}
+                if doc_metadata:
+                    doc_file_name = doc_metadata.get('file_name') or doc_metadata.get('source_file')
+                    if doc_file_name == file_name:
+                        target_ids.append(doc_id)
+
+            if not target_ids:
+                raise HTTPException(status_code=404, detail=f"未找到文件 '{file_name}' 的文档")
+
+            # 删除这些文档块
+            target_collection.delete(ids=target_ids)
+            
+            logger.info(f"成功删除文件 '{file_name}' 的 {len(target_ids)} 个文档块")
+
+            return DeleteDocumentResponse(
+                message=f"成功删除文件 '{file_name}' 的所有文档块",
+                file_name=file_name,
+                deleted_chunks=len(target_ids),
+                collection_name=collection_name
+            )
+
+        except Exception as e:
+            logger.error(f"删除文档块时出错: {e}")
+            raise HTTPException(status_code=500, detail=f"删除文档块时出错: {str(e)}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除文档失败: {e}")
+        raise HTTPException(status_code=500, detail=f"删除文档失败: {str(e)}")
 
 @app.post("/api/collections/{collection_name}/chunk")
 async def chunk_text(collection_name: str, request: ChunkTextRequest):

@@ -236,8 +236,15 @@ class RAGChunker:
     def _split_into_sentences(self, text: str) -> List[str]:
         """将文本分割为句子"""
         try:
-            # 使用NLTK进行句子分割
-            sentences = sent_tokenize(text, language='english')
+            # 检测文本语言并选择合适的分割方法
+            if self._is_chinese_text(text):
+                # 中文文本使用正则表达式分割
+                sentences = re.split(r'[。！？；;]+', text)
+                logger.info("使用中文句子分割")
+            else:
+                # 英文文本使用NLTK分割
+                sentences = sent_tokenize(text, language='english')
+                logger.info("使用英文句子分割")
 
             # 过滤掉空句子和过短的句子
             filtered_sentences = []
@@ -246,29 +253,59 @@ class RAGChunker:
                 if len(sentence) > 10:  # 过滤掉过短的句子
                     filtered_sentences.append(sentence)
 
+            logger.info(f"句子分割完成: {len(filtered_sentences)} 个句子")
             return filtered_sentences if filtered_sentences else [text]
 
         except Exception as e:
-            logger.warning(f"NLTK句子分割失败，使用简单分割: {e}")
+            logger.warning(f"句子分割失败，使用简单分割: {e}")
             # 回退到简单的句子分割
-            sentences = re.split(r'[。！？.!?]+', text)
+            sentences = re.split(r'[。！？.!?；;]+', text)
             return [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
+
+    def _is_chinese_text(self, text: str) -> bool:
+        """检测是否为中文文本"""
+        chinese_chars = 0
+        total_chars = 0
+
+        for char in text:
+            if char.strip():  # 忽略空白字符
+                total_chars += 1
+                if '\u4e00' <= char <= '\u9fff':  # 中文字符范围
+                    chinese_chars += 1
+
+        # 如果中文字符占比超过30%，认为是中文文本
+        return total_chars > 0 and (chinese_chars / total_chars) > 0.3
 
     def _get_sentence_embeddings(self, sentences: List[str]) -> np.ndarray:
         """获取句子的嵌入向量"""
-        embedding_func = self._get_embedding_function()
+        try:
+            embedding_func = self._get_embedding_function()
+            logger.info(f"开始生成 {len(sentences)} 个句子的嵌入向量")
 
-        # 阿里云API限制：批量大小不能超过10
-        batch_size = 10
-        all_embeddings = []
+            # 阿里云API限制：批量大小不能超过10
+            batch_size = 10
+            all_embeddings = []
 
-        for i in range(0, len(sentences), batch_size):
-            batch = sentences[i:i + batch_size]
-            batch_embeddings = embedding_func(batch)
-            all_embeddings.extend(batch_embeddings)
+            for i in range(0, len(sentences), batch_size):
+                batch = sentences[i:i + batch_size]
+                logger.info(f"处理批次 {i//batch_size + 1}: {len(batch)} 个句子")
 
-        # 转换为numpy数组
-        return np.array(all_embeddings)
+                try:
+                    batch_embeddings = embedding_func(batch)
+                    all_embeddings.extend(batch_embeddings)
+                    logger.info(f"成功生成批次 {i//batch_size + 1} 的嵌入向量")
+                except Exception as e:
+                    logger.error(f"批次 {i//batch_size + 1} 嵌入向量生成失败: {e}")
+                    raise e
+
+            # 转换为numpy数组
+            embeddings_array = np.array(all_embeddings)
+            logger.info(f"所有嵌入向量生成完成，形状: {embeddings_array.shape}")
+            return embeddings_array
+
+        except Exception as e:
+            logger.error(f"获取句子嵌入向量失败: {e}")
+            raise e
 
     def _calculate_similarities(self, embeddings: np.ndarray) -> List[float]:
         """计算相邻句子的语义相似度"""

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Layout,
   Card,
@@ -36,6 +36,8 @@ import {
   UploadOutlined,
   InboxOutlined,
   SettingOutlined,
+  DeleteOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -98,6 +100,7 @@ interface UploadProgress {
 const CollectionDetail: React.FC = () => {
   const { collectionName } = useParams<{ collectionName: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [collectionDetail, setCollectionDetail] = useState<CollectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -107,6 +110,9 @@ const CollectionDetail: React.FC = () => {
   const [uploadForm] = Form.useForm();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [chunkingMethod, setChunkingMethod] = useState<ChunkingMethod>(ChunkingMethod.RECURSIVE);
+
+  // 文档删除相关状态
+  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
 
   // 获取集合详细信息
   const fetchCollectionDetail = async () => {
@@ -133,7 +139,22 @@ const CollectionDetail: React.FC = () => {
 
   // 返回集合列表
   const handleGoBack = () => {
-    navigate('/');
+    // 获取来源页面参数
+    const fromPage = searchParams.get('from');
+
+    // 根据来源页面决定返回路径
+    switch (fromPage) {
+      case 'collections':
+        navigate('/collections');
+        break;
+      case 'query':
+        navigate('/query');
+        break;
+      default:
+        // 默认返回到集合管理页面
+        navigate('/collections');
+        break;
+    }
   };
 
   // 处理文件选择
@@ -204,6 +225,43 @@ const CollectionDetail: React.FC = () => {
     setChunkingMethod(method);
     const defaultConfig = getDefaultChunkingConfig(method);
     uploadForm.setFieldsValue(defaultConfig);
+  };
+
+  // 处理文档删除
+  const handleDocumentDelete = async (fileName: string) => {
+    console.log('handleDocumentDelete called with fileName:', fileName);
+    console.log('collectionName:', collectionName);
+
+    if (!collectionName || !fileName) {
+      message.error('参数错误');
+      return;
+    }
+
+    // 直接确认删除，跳过Modal.confirm（临时解决方案）
+    const confirmed = window.confirm(`您确定要删除文档 "${fileName}" 吗？\n\n此操作将删除该文档的所有分块，删除后无法恢复！`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleteLoading(fileName);
+    try {
+      console.log('Calling delete API...');
+      await axios.delete(
+        `${API_BASE_URL}/collections/${encodeURIComponent(collectionName)}/documents/${encodeURIComponent(fileName)}`
+      );
+
+      console.log('Delete API call successful');
+      message.success(`文档 "${fileName}" 删除成功`);
+      // 刷新集合详情
+      fetchCollectionDetail();
+    } catch (error: any) {
+      console.error('删除文档失败:', error);
+      const errorMessage = error.response?.data?.detail || '删除文档失败';
+      message.error(errorMessage);
+    } finally {
+      setDeleteLoading(null);
+    }
   };
 
   // 处理文档上传
@@ -364,7 +422,9 @@ const CollectionDetail: React.FC = () => {
       index: index + 1,
       // 使用第一个文档的内容作为预览
       document: group.firstDoc.document,
-      metadata: group.firstDoc.metadata
+      metadata: group.firstDoc.metadata,
+      // 添加向量信息用于显示
+      embedding: group.firstDoc.embedding
     }));
   };
 
@@ -633,6 +693,25 @@ const CollectionDetail: React.FC = () => {
                                 </div>
                               );
                             }
+                          },
+                          {
+                            title: '操作',
+                            key: 'actions',
+                            width: 100,
+                            align: 'center',
+                            render: (_, record) => (
+                              <Space size="small">
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  icon={<DeleteOutlined />}
+                                  danger
+                                  loading={deleteLoading === record.fileName}
+                                  onClick={() => handleDocumentDelete(record.fileName)}
+                                  title="删除文档"
+                                />
+                              </Space>
+                            )
                           }
                         ]}
                         pagination={{
@@ -737,7 +816,7 @@ const CollectionDetail: React.FC = () => {
         onCancel={closeUploadModal}
         footer={null}
         width={800}
-        destroyOnClose
+        centered
       >
         <Form
           form={uploadForm}

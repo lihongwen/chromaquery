@@ -86,7 +86,7 @@ const CollectionManager: React.FC = () => {
 
   // 查看集合详情
   const handleViewCollection = (collection: CollectionInfo) => {
-    navigate(`/collections/${encodeURIComponent(collection.display_name)}/detail`);
+    navigate(`/collections/${encodeURIComponent(collection.display_name)}/detail?from=collections`);
   };
 
   // 创建集合
@@ -185,8 +185,9 @@ const CollectionManager: React.FC = () => {
       key: 'files_count',
       width: '18%',
       render: (filesCount: number | undefined, record: CollectionInfo) => {
-        const count = filesCount || 0;
-        const totalChunks = record.chunk_statistics?.total_chunks || record.count;
+        // 优先使用chunk_statistics中的files_count，其次使用filesCount，最后默认为0
+        const count = record.chunk_statistics?.files_count ?? filesCount ?? 0;
+        const totalChunks = record.chunk_statistics?.total_chunks ?? record.count;
 
         return (
           <div>

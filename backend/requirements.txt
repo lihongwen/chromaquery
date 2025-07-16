@@ -19,3 +19,4 @@ numpy<2.0
 # 语义分块依赖
 scikit-learn>=1.3.0
 nltk>=3.8.0
+jieba>=0.42.1
