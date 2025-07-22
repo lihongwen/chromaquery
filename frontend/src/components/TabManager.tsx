@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Tabs, type TabsProps } from 'antd';
-import { BrowserRouter } from 'react-router-dom';
 import {
   DatabaseOutlined,
   SearchOutlined,
@@ -59,7 +58,7 @@ const TabManager: React.FC = () => {
   ];
 
   return (
-    <BrowserRouter>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Tabs
         type="card"
         activeKey={activeTab}
@@ -68,8 +67,10 @@ const TabManager: React.FC = () => {
         className="main-tabs"
         size="large"
         destroyInactiveTabPane={true}
+        style={{ height: '100%' }}
+        tabBarStyle={{ marginBottom: 0 }}
       />
-    </BrowserRouter>
+    </div>
   );
 };
 

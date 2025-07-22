@@ -486,13 +486,15 @@ const SettingsTab: React.FC = () => {
   };
 
   return (
-    <Layout style={{ minHeight: '600px' }}>
+    <Layout style={{ height: 'calc(100vh - 120px)', minHeight: '500px' }}>
       <Sider
         width={250}
         theme="light"
         style={{
           backgroundColor: 'var(--ant-color-bg-container)',
           borderRight: '1px solid var(--ant-color-border)',
+          height: '100%',
+          overflow: 'auto',
         }}
       >
         <Menu
@@ -503,8 +505,8 @@ const SettingsTab: React.FC = () => {
           style={{ borderRight: 0 }}
         />
       </Sider>
-      
-      <Content style={{ padding: 24 }}>
+
+      <Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
         {renderContent()}
       </Content>
     </Layout>

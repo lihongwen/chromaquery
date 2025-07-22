@@ -20,7 +20,8 @@ import {
   Form,
   Upload,
   Popconfirm,
-  Tooltip
+  Tooltip,
+  Table
 } from 'antd';
 import {
   DatabaseOutlined,
@@ -32,11 +33,13 @@ import {
   EyeOutlined,
   SettingOutlined,
   DeleteOutlined,
-  UploadOutlined
+  UploadOutlined,
+  AppstoreOutlined,
+  UnorderedListOutlined
 } from '@ant-design/icons';
 import { useResponsive } from '../../hooks/useResponsive';
-import { useNavigate } from 'react-router-dom';
 import { api, API_BASE_URL } from '../../config/api';
+import CollectionDetail from '../CollectionDetail';
 
 const { Sider, Content } = Layout;
 const { Text } = Typography;
@@ -58,7 +61,6 @@ const CollectionsTab: React.FC = () => {
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const [siderCollapsed, setSiderCollapsed] = useState(false);
   const { isMobile } = useResponsive();
-  const navigate = useNavigate();
 
   // 模态框状态
   const [createModalVisible, setCreateModalVisible] = useState(false);
@@ -67,6 +69,12 @@ const CollectionsTab: React.FC = () => {
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [currentCollection, setCurrentCollection] = useState<CollectionInfo | null>(null);
 
+  // 星标状态管理
+  const [favoriteCollections, setFavoriteCollections] = useState<Set<string>>(new Set());
+
+  // 视图模式状态管理
+  const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
+
   // 表单实例
   const [createForm] = Form.useForm();
   const [importForm] = Form.useForm();
@@ -74,7 +82,30 @@ const CollectionsTab: React.FC = () => {
 
   useEffect(() => {
     fetchCollections();
+    // 从localStorage加载收藏的集合
+    loadFavoriteCollections();
   }, []);
+
+  // 加载收藏的集合
+  const loadFavoriteCollections = () => {
+    try {
+      const saved = localStorage.getItem('chromadb_favorite_collections');
+      if (saved) {
+        setFavoriteCollections(new Set(JSON.parse(saved)));
+      }
+    } catch (error) {
+      console.error('加载收藏集合失败:', error);
+    }
+  };
+
+  // 保存收藏的集合到localStorage
+  const saveFavoriteCollections = (favorites: Set<string>) => {
+    try {
+      localStorage.setItem('chromadb_favorite_collections', JSON.stringify(Array.from(favorites)));
+    } catch (error) {
+      console.error('保存收藏集合失败:', error);
+    }
+  };
 
   const fetchCollections = async () => {
     try {
@@ -89,6 +120,27 @@ const CollectionsTab: React.FC = () => {
 
   const handleCollectionClick = (collectionName: string) => {
     setSelectedCollection(collectionName);
+  };
+
+  // 切换星标状态
+  const toggleFavorite = (collection: CollectionInfo, event?: React.MouseEvent) => {
+    if (event) {
+      event.stopPropagation(); // 阻止事件冒泡
+    }
+
+    const newFavorites = new Set(favoriteCollections);
+    const collectionKey = collection.name; // 使用内部名称作为key
+
+    if (newFavorites.has(collectionKey)) {
+      newFavorites.delete(collectionKey);
+      message.success(`已取消收藏 "${collection.display_name}"`);
+    } else {
+      newFavorites.add(collectionKey);
+      message.success(`已收藏 "${collection.display_name}"`);
+    }
+
+    setFavoriteCollections(newFavorites);
+    saveFavoriteCollections(newFavorites);
   };
 
   // 创建集合
@@ -140,16 +192,29 @@ const CollectionsTab: React.FC = () => {
     if (!currentCollection) return;
 
     try {
-      // 这里可以调用API更新集合元数据
-      // 目前先显示成功消息
-      message.success(`集合 "${currentCollection.display_name}" 设置已更新`);
+      const { display_name, description, tags } = values;
+
+      // 检查是否需要重命名
+      if (display_name !== currentCollection.display_name) {
+        // 调用重命名API
+        await api.collections.rename({
+          old_name: currentCollection.display_name,
+          new_name: display_name
+        });
+        message.success(`集合已从 "${currentCollection.display_name}" 重命名为 "${display_name}"`);
+      } else {
+        // 如果只是更新其他元数据，这里可以扩展API支持
+        message.success(`集合 "${currentCollection.display_name}" 设置已更新`);
+      }
+
       setSettingsModalVisible(false);
       settingsForm.resetFields();
       setCurrentCollection(null);
       // 重新获取集合列表
       fetchCollections();
-    } catch (error) {
-      message.error('保存设置失败');
+    } catch (error: any) {
+      console.error('保存设置失败:', error);
+      // 错误已在api拦截器中处理，这里不需要重复显示
     }
   };
 
@@ -296,7 +361,38 @@ const CollectionsTab: React.FC = () => {
         </Panel>
 
         <Panel header="⭐ 收藏夹" key="favorites">
-          <Text type="secondary">暂无收藏</Text>
+          {favoriteCollections.size === 0 ? (
+            <Text type="secondary">暂无收藏</Text>
+          ) : (
+            <List
+              size="small"
+              dataSource={collections.filter(c => favoriteCollections.has(c.name))}
+              renderItem={(collection) => (
+                <List.Item>
+                  <Tooltip title={collection.display_name} placement="right">
+                    <Button
+                      type="text"
+                      size="small"
+                      onClick={() => handleCollectionClick(collection.name)}
+                      style={{
+                        fontWeight: selectedCollection === collection.name ? 'bold' : 'normal',
+                        width: '100%',
+                        textAlign: 'left',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        padding: '4px 8px',
+                        color: '#faad14'
+                      }}
+                      icon={<StarOutlined style={{ color: '#faad14', fontSize: '12px' }} />}
+                    >
+                      {collection.display_name}
+                    </Button>
+                  </Tooltip>
+                </List.Item>
+              )}
+            />
+          )}
         </Panel>
 
         <Panel header="🕒 最近访问" key="recent">
@@ -391,7 +487,7 @@ const CollectionsTab: React.FC = () => {
   }
 
   return (
-    <Layout style={{ minHeight: '600px' }}>
+    <Layout style={{ height: 'calc(100vh - 120px)', minHeight: '500px' }}>
       {!isMobile && (
         <Sider
           width={280}
@@ -402,15 +498,25 @@ const CollectionsTab: React.FC = () => {
           style={{
             backgroundColor: 'var(--ant-color-bg-container)',
             borderRight: '1px solid var(--ant-color-border)',
+            height: '100%',
+            overflow: 'auto',
           }}
         >
           {siderContent}
         </Sider>
       )}
-      
-      <Content style={{ padding: 24 }}>
-        {/* 统计卡片 */}
-        <Row gutter={16} style={{ marginBottom: 24 }}>
+
+      <Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
+        {selectedCollection ? (
+          // 显示集合详情页面
+          <CollectionDetail
+            collectionName={selectedCollection}
+            onBack={() => setSelectedCollection(null)}
+          />
+        ) : (
+          <>
+            {/* 统计卡片 */}
+            <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={6}>
             <Card>
               <Statistic
@@ -450,8 +556,8 @@ const CollectionsTab: React.FC = () => {
         </Row>
 
         {/* 搜索和过滤栏 */}
-        <Row style={{ marginBottom: 24 }}>
-          <Col span={24}>
+        <Row style={{ marginBottom: 24 }} justify="space-between" align="middle">
+          <Col flex="auto">
             <Space.Compact style={{ width: '100%' }}>
               <Input.Search
                 placeholder="搜索集合..."
@@ -468,107 +574,268 @@ const CollectionsTab: React.FC = () => {
               <DatePicker.RangePicker />
             </Space.Compact>
           </Col>
+          <Col>
+            <Button.Group>
+              <Button
+                type={viewMode === 'card' ? 'primary' : 'default'}
+                icon={<AppstoreOutlined />}
+                onClick={() => setViewMode('card')}
+              >
+                卡片视图
+              </Button>
+              <Button
+                type={viewMode === 'list' ? 'primary' : 'default'}
+                icon={<UnorderedListOutlined />}
+                onClick={() => setViewMode('list')}
+              >
+                列表视图
+              </Button>
+            </Button.Group>
+          </Col>
         </Row>
 
-        {/* 集合网格视图 */}
-        <Row gutter={[16, 16]}>
-          {collections.map((collection) => (
-            <Col 
-              key={collection.name}
-              xs={24} 
-              sm={12} 
-              md={8} 
-              lg={6}
-            >
-              <Card
-                title={
-                  <Tooltip title={collection.display_name} placement="top">
-                    <div
-                      style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        maxWidth: '200px'
-                      }}
-                    >
-                      {collection.display_name}
-                    </div>
-                  </Tooltip>
-                }
-                extra={<StarOutlined />}
-                actions={[
-                  <Tooltip title="查看详情" key="view">
-                    <EyeOutlined
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        viewCollectionDetail(collection);
-                      }}
-                      style={{
-                        fontSize: '16px',
-                        color: '#1890ff',
-                        cursor: 'pointer'
-                      }}
-                    />
-                  </Tooltip>,
-                  <Tooltip title="集合设置" key="setting">
-                    <SettingOutlined
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        showCollectionSettings(collection);
-                      }}
-                      style={{
-                        fontSize: '16px',
-                        color: '#52c41a',
-                        cursor: 'pointer'
-                      }}
-                    />
-                  </Tooltip>,
-                  <Popconfirm
-                    key="delete"
-                    title="确认删除"
-                    description={`确定要删除集合 "${collection.display_name}" 吗？`}
-                    onConfirm={(e) => {
-                      e?.stopPropagation();
-                      deleteCollection(collection);
-                    }}
-                    okText="确定"
-                    cancelText="取消"
-                    onClick={(e) => e?.stopPropagation()}
-                  >
-                    <Tooltip title="删除集合">
-                      <DeleteOutlined
+        {/* 集合视图 */}
+        {viewMode === 'card' ? (
+          // 卡片视图
+          <Row gutter={[16, 16]}>
+            {collections.map((collection) => (
+              <Col
+                key={collection.name}
+                xs={24}
+                sm={12}
+                md={8}
+                lg={6}
+              >
+                <Card
+                  title={
+                    <Tooltip title={collection.display_name} placement="top">
+                      <div
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          maxWidth: '200px'
+                        }}
+                      >
+                        {collection.display_name}
+                      </div>
+                    </Tooltip>
+                  }
+                  extra={
+                    <Tooltip title={favoriteCollections.has(collection.name) ? "取消收藏" : "收藏集合"}>
+                      <StarOutlined
+                        style={{
+                          color: favoriteCollections.has(collection.name) ? '#faad14' : '#d9d9d9',
+                          cursor: 'pointer',
+                          fontSize: '16px'
+                        }}
+                        onClick={(e) => toggleFavorite(collection, e)}
+                      />
+                    </Tooltip>
+                  }
+                  actions={[
+                    <Tooltip title="查看详情" key="view">
+                      <EyeOutlined
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          viewCollectionDetail(collection);
+                        }}
                         style={{
                           fontSize: '16px',
-                          color: '#ff4d4f',
+                          color: '#1890ff',
                           cursor: 'pointer'
                         }}
                       />
+                    </Tooltip>,
+                    <Tooltip title="集合设置" key="setting">
+                      <SettingOutlined
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          showCollectionSettings(collection);
+                        }}
+                        style={{
+                          fontSize: '16px',
+                          color: '#52c41a',
+                          cursor: 'pointer'
+                        }}
+                      />
+                    </Tooltip>,
+                    <Popconfirm
+                      key="delete"
+                      title="确认删除"
+                      description={`确定要删除集合 "${collection.display_name}" 吗？`}
+                      onConfirm={(e) => {
+                        e?.stopPropagation();
+                        deleteCollection(collection);
+                      }}
+                      okText="确定"
+                      cancelText="取消"
+                      onClick={(e) => e?.stopPropagation()}
+                    >
+                      <Tooltip title="删除集合">
+                        <DeleteOutlined
+                          style={{
+                            fontSize: '16px',
+                            color: '#ff4d4f',
+                            cursor: 'pointer'
+                          }}
+                        />
+                      </Tooltip>
+                    </Popconfirm>
+                  ]}
+                  className="collection-card"
+                  style={{
+                    cursor: 'pointer',
+                    transition: 'all 0.3s ease',
+                    height: '100%'
+                  }}
+                  onClick={() => handleCollectionClick(collection.name)}
+                >
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Statistic
+                      title="文档数"
+                      value={collection.count}
+                      valueStyle={{ fontSize: '18px' }}
+                    />
+                    <Tag color="blue">{collection.dimension || collection.metadata?.vector_dimension || 'N/A'}维</Tag>
+                    <Text type="secondary" style={{ fontSize: '12px' }}>
+                      {collection.updated_at || '未知时间'}
+                    </Text>
+                  </Space>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        ) : (
+          // 列表视图
+          <Table
+            dataSource={collections}
+            rowKey="name"
+            pagination={{
+              pageSize: 10,
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`
+            }}
+            columns={[
+              {
+                title: '集合名称',
+                dataIndex: 'display_name',
+                key: 'display_name',
+                render: (text, record) => (
+                  <Space>
+                    <Tooltip title={favoriteCollections.has(record.name) ? "取消收藏" : "收藏集合"}>
+                      <StarOutlined
+                        style={{
+                          color: favoriteCollections.has(record.name) ? '#faad14' : '#d9d9d9',
+                          cursor: 'pointer',
+                          fontSize: '14px'
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(record, e);
+                        }}
+                      />
                     </Tooltip>
-                  </Popconfirm>
-                ]}
-                className="collection-card"
-                style={{
-                  cursor: 'pointer',
-                  transition: 'all 0.3s ease',
-                  height: '100%'
-                }}
-                onClick={() => handleCollectionClick(collection.name)}
-              >
-                <Space direction="vertical" style={{ width: '100%' }}>
-                  <Statistic
-                    title="文档数"
-                    value={collection.count}
-                    valueStyle={{ fontSize: '18px' }}
-                  />
-                  <Tag color="blue">{collection.dimension || 'N/A'}维</Tag>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>
-                    {collection.updated_at || '未知时间'}
+                    <Text strong style={{ cursor: 'pointer' }} onClick={() => handleCollectionClick(record.name)}>
+                      {text}
+                    </Text>
+                  </Space>
+                )
+              },
+              {
+                title: '文档数量',
+                dataIndex: 'count',
+                key: 'count',
+                width: 120,
+                align: 'center',
+                render: (count) => (
+                  <Tag color={count > 0 ? 'blue' : 'default'}>
+                    {count} 个
+                  </Tag>
+                )
+              },
+              {
+                title: '向量维度',
+                dataIndex: 'dimension',
+                key: 'dimension',
+                width: 120,
+                align: 'center',
+                render: (dimension, record) => (
+                  <Tag color="purple">
+                    {dimension || record.metadata?.vector_dimension || 'N/A'}维
+                  </Tag>
+                )
+              },
+              {
+                title: '创建时间',
+                dataIndex: 'updated_at',
+                key: 'updated_at',
+                width: 150,
+                render: (time) => (
+                  <Text type="secondary">
+                    {time || '未知时间'}
                   </Text>
-                </Space>
-              </Card>
-            </Col>
-          ))}
-        </Row>
+                )
+              },
+              {
+                title: '操作',
+                key: 'actions',
+                width: 150,
+                align: 'center',
+                render: (_, record) => (
+                  <Space>
+                    <Tooltip title="查看详情">
+                      <Button
+                        type="text"
+                        icon={<EyeOutlined />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          viewCollectionDetail(record);
+                        }}
+                      />
+                    </Tooltip>
+                    <Tooltip title="集合设置">
+                      <Button
+                        type="text"
+                        icon={<SettingOutlined />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          showCollectionSettings(record);
+                        }}
+                      />
+                    </Tooltip>
+                    <Popconfirm
+                      title="确认删除"
+                      description={`确定要删除集合 "${record.display_name}" 吗？`}
+                      onConfirm={(e) => {
+                        e?.stopPropagation();
+                        deleteCollection(record);
+                      }}
+                      okText="确定"
+                      cancelText="取消"
+                    >
+                      <Tooltip title="删除集合">
+                        <Button
+                          type="text"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </Tooltip>
+                    </Popconfirm>
+                  </Space>
+                )
+              }
+            ]}
+            onRow={(record) => ({
+              onClick: () => handleCollectionClick(record.name),
+              style: { cursor: 'pointer' }
+            })}
+          />
+        )}
+          </>
+        )}
       </Content>
 
       {/* 创建集合模态框 */}
@@ -872,7 +1139,7 @@ const CollectionsTab: React.FC = () => {
                     </div>
                     <div>
                       <Text strong>向量维度：</Text>
-                      <Tag color="blue">{currentCollection.dimension || 'N/A'}维</Tag>
+                      <Tag color="blue">{currentCollection.dimension || currentCollection.metadata?.vector_dimension || 'N/A'}维</Tag>
                     </div>
                   </Space>
                 </Card>

@@ -455,37 +455,4 @@ def get_default_chunking_config(method: ChunkingMethod) -> ChunkingConfig:
     return configs.get(method, configs[ChunkingMethod.RECURSIVE])
 
 
-# 测试函数
-def test_chunking():
-    """测试分块功能"""
-    test_text = """
-    这是第一段文本。它包含了一些基本信息。
-    
-    这是第二段文本。它提供了更多的详细信息。
-    
-    第三段文本包含了总结性的内容。它帮助读者理解整体概念。
-    
-    最后一段文本提供了结论和展望。
-    """
-    
-    chunker = RAGChunker()
-    
-    # 测试递归分块
-    config = get_default_chunking_config(ChunkingMethod.RECURSIVE)
-    config.chunk_size = 100
-    config.chunk_overlap = 20
-    
-    result = chunker.chunk_text(test_text, config)
-    
-    print(f"分块方式: {result.method_used}")
-    print(f"总块数: {result.total_chunks}")
-    print(f"处理时间: {result.processing_time:.3f}秒")
-    print(f"原文长度: {result.original_length}")
-    
-    for chunk in result.chunks:
-        print(f"\n块 {chunk.index}: {chunk.text[:50]}...")
-        print(f"位置: {chunk.start_pos}-{chunk.end_pos}")
 
-
-if __name__ == "__main__":
-    test_chunking()

@@ -250,27 +250,4 @@ def create_hierarchical_rag_example():
     return rag_manager
 
 
-if __name__ == "__main__":
-    # 测试示例
-    rag_manager = create_hierarchical_rag_example()
-    
-    # 模拟文档
-    test_documents = [
-        "人工智能的发展历程可以追溯到20世纪50年代。机器学习是人工智能的重要分支，深度学习又是机器学习的子集。",
-        "自然语言处理技术在近年来取得了重大突破，Transformer架构彻底改变了NLP领域的发展方向。",
-        "计算机视觉技术已经在图像识别、物体检测等任务中达到了人类水平的性能。"
-    ]
-    
-    # 添加文档（模拟）
-    print("=== 层次化RAG系统测试 ===")
-    print("添加测试文档...")
-    
-    # 模拟搜索
-    test_queries = ["机器学习", "自然语言处理", "计算机视觉"]
-    
-    for query in test_queries:
-        print(f"\n查询: {query}")
-        # 这里只是演示结构，实际需要ChromaDB连接
-        print("  - 层次化检索系统已准备就绪")
-        print("  - 支持子chunk级别的精确匹配")
-        print("  - 提供父chunk级别的完整上下文")
+

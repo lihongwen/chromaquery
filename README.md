@@ -58,12 +58,14 @@ npm install
 
 4. 启动服务
 
-后端：
+后端（推荐使用开发版本）：
 ```bash
 # 激活虚拟环境（在项目根目录）
 source .venv/bin/activate
-# 启动后端服务
-python backend/main.py
+# 启动开发版本（推荐）
+python backend/dev_main.py
+# 或启动生产版本（需要解决依赖问题）
+# python backend/main.py
 ```
 
 前端：
@@ -77,15 +79,26 @@ npm run dev
 - 后端API：http://localhost:8000
 - API文档：http://localhost:8000/docs
 
+## 启动文件说明
+
+项目提供两个后端启动文件：
+
+- **dev_main.py** (推荐): 开发/测试版本，依赖较少，启动快速，适合开发环境
+- **main.py**: 生产版本，功能完整，但目前存在依赖版本冲突问题
+
+详细说明请参考：[backend/STARTUP_GUIDE.md](backend/STARTUP_GUIDE.md)
+
 ## 项目结构
 
 ```
 chromadb-web-manager/
 ├── backend/                 # 后端代码
-│   ├── main.py             # FastAPI应用入口
-│   ├── api/                # API路由
-│   ├── models/             # 数据模型
-│   ├── services/           # 业务逻辑
+│   ├── main.py             # 生产版本启动文件
+│   ├── dev_main.py         # 开发版本启动文件（推荐）
+│   ├── STARTUP_GUIDE.md    # 启动文件说明
+│   ├── alibaba_embedding.py # 阿里云嵌入模型
+│   ├── rag_chunking.py     # RAG分块功能
+│   ├── llm_client.py       # LLM客户端
 │   └── requirements.txt    # Python依赖
 ├── frontend/               # 前端代码
 │   ├── src/                # 源代码

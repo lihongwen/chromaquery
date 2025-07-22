@@ -94,6 +94,7 @@ class CollectionInfo(BaseModel):
     metadata: dict = {}
     files_count: Optional[int] = None
     chunk_statistics: Optional[dict] = None
+    dimension: Optional[int] = None  # 向量维数
 
 class DocumentInfo(BaseModel):
     id: str
@@ -163,6 +164,7 @@ class LLMQueryRequest(BaseModel):
     limit: Optional[int] = 5
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2000
+    similarity_threshold: Optional[float] = 1.5
 
 class LLMStreamChunk(BaseModel):
     content: str
@@ -271,13 +273,30 @@ async def get_collections():
                     'methods_used': []
                 }
 
+            # 从元数据中提取向量维数，如果没有则尝试从实际向量中获取
+            dimension = metadata.get('vector_dimension')
+
+            # 如果元数据中没有维度信息，尝试从实际向量中获取
+            if not dimension and count > 0:
+                try:
+                    sample_result = collection.get(limit=1, include=["embeddings"])
+                    if sample_result and sample_result.get('embeddings') and sample_result['embeddings'][0]:
+                        dimension = len(sample_result['embeddings'][0])
+                        # 更新元数据中的维度信息
+                        metadata['vector_dimension'] = dimension
+                        logger.info(f"从实际向量中检测到集合 '{display_name}' 的维度: {dimension}")
+                except Exception as e:
+                    logger.warning(f"无法获取集合 '{display_name}' 的向量维度: {e}")
+                    dimension = None
+
             result.append(CollectionInfo(
                 name=collection.name,  # 原始编码名称
                 display_name=display_name,  # 显示名称（中文）
                 count=count,
                 metadata=metadata,
                 files_count=files_count,
-                chunk_statistics=chunk_statistics
+                chunk_statistics=chunk_statistics,
+                dimension=dimension  # 向量维数
             ))
 
         return result
@@ -528,11 +547,27 @@ async def rename_collection(request: RenameCollectionRequest):
         new_metadata['original_name'] = request.new_name
 
         # ChromaDB不支持直接重命名，需要创建新集合并复制数据
+        # 检查原集合是否使用阿里云嵌入模型
+        embedding_function = None
+        if new_metadata.get('embedding_model') == 'alibaba-text-embedding-v4':
+            try:
+                embedding_function = create_alibaba_embedding_function(dimension=1024)
+                logger.info(f"为重命名集合创建阿里云嵌入函数")
+            except Exception as e:
+                logger.warning(f"创建阿里云嵌入函数失败，使用默认函数: {e}")
+
         # 创建新集合
-        new_collection = chroma_client.create_collection(
-            name=new_encoded,
-            metadata=new_metadata
-        )
+        if embedding_function:
+            new_collection = chroma_client.create_collection(
+                name=new_encoded,
+                metadata=new_metadata,
+                embedding_function=embedding_function
+            )
+        else:
+            new_collection = chroma_client.create_collection(
+                name=new_encoded,
+                metadata=new_metadata
+            )
 
         # 复制数据（如果有的话）
         try:
@@ -992,8 +1027,11 @@ async def query_collections(request: QueryRequest):
                         distance = search_results['distances'][0][i] if search_results.get('distances') else 0.0
                         similarity = 1 - distance
 
-                        # 只添加相似度合理的结果（distance < 2.0表示有一定相关性）
-                        if distance < 2.0:
+                        # 相似度阈值过滤：使用用户设置的阈值
+                        # 注意：distance越小表示越相似，阈值越小要求越严格
+                        # 前端传递的是0-1的相似度，需要转换为distance阈值
+                        distance_threshold = 2.0 - (request.similarity_threshold * 2.0)  # 转换公式
+                        if distance < distance_threshold:
                             result = QueryResult(
                                 id=doc_id,
                                 document=search_results['documents'][0][i] if search_results.get('documents') else "",
@@ -1105,8 +1143,11 @@ async def llm_query(request: LLMQueryRequest):
                     for i in range(len(search_results['documents'][0])):
                         distance = search_results['distances'][0][i]
 
-                        # 过滤相似度过低的结果 (distance < 2.0 表示有一定相关性)
-                        if distance < 2.0:
+                        # 相似度阈值过滤：使用用户设置的阈值
+                        # 注意：distance越小表示越相似，阈值越小要求越严格
+                        # 前端传递的是0-1的相似度，需要转换为distance阈值
+                        distance_threshold = 2.0 - (request.similarity_threshold * 2.0)  # 转换公式
+                        if distance < distance_threshold:
                             result_data = {
                                 'id': f"{collection_name}_{i}_{int(time.time() * 1000)}",
                                 'document': search_results['documents'][0][i],

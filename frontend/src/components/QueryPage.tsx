@@ -1,15 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Layout, Card, List, Input, Button, Select, Space, Typography, Spin, message, Empty, Alert, Result } from 'antd';
-import { SearchOutlined, SendOutlined, MessageOutlined, DatabaseOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import axios from 'axios';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Layout, Card, List, Input, Button, Select, Space, Typography, message, Empty, Result, Drawer, FloatButton } from 'antd';
+import { SearchOutlined, SendOutlined, MessageOutlined, DatabaseOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined, MenuOutlined, SettingOutlined } from '@ant-design/icons';
+import ThemeToggle from './ThemeToggle';
+import { useResponsive } from '../hooks/useResponsive';
+import { api, API_BASE_URL } from '../config/api';
 
 const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
 const { TextArea } = Input;
-
-// API基础URL
-const API_BASE_URL = '/api';
 
 // 接口定义
 interface CollectionInfo {
@@ -50,25 +48,60 @@ interface ConversationMessage {
 interface QueryPageProps {
   hasCollections?: boolean | null;
   onCollectionsChange?: () => void;
+  onNavigateToCollections?: () => void;
 }
 
-const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChange }) => {
-  const navigate = useNavigate();
+const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToCollections }) => {
+  const responsive = useResponsive();
 
-  // 添加CSS动画样式
+  // 响应式状态管理
+  const [leftDrawerVisible, setLeftDrawerVisible] = useState(false);
+  const [rightDrawerVisible, setRightDrawerVisible] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+
+  // 简化的CSS样式
   useEffect(() => {
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes blink {
-        0%, 50% { opacity: 1; }
-        51%, 100% { opacity: 0; }
-      }
-    `;
-    document.head.appendChild(style);
+    const styleId = 'query-page-styles';
+    let style = document.getElementById(styleId) as HTMLStyleElement;
+
+    if (!style) {
+      style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        .typing-cursor {
+          opacity: 1;
+          animation: blink 1s infinite;
+        }
+        @keyframes blink {
+          0%, 50% { opacity: 1; }
+          51%, 100% { opacity: 0.3; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
     return () => {
-      document.head.removeChild(style);
+      const existingStyle = document.getElementById(styleId);
+      if (existingStyle && document.head.contains(existingStyle)) {
+        document.head.removeChild(existingStyle);
+      }
     };
   }, []);
+
+  // 响应式布局控制
+  useEffect(() => {
+    if (responsive.isMobile) {
+      setLeftCollapsed(true);
+      setRightCollapsed(true);
+    } else if (responsive.isTablet) {
+      setLeftCollapsed(false);
+      setRightCollapsed(true);
+    } else {
+      setLeftCollapsed(false);
+      setRightCollapsed(false);
+    }
+  }, [responsive.isMobile, responsive.isTablet]);
 
   // 状态管理
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -79,29 +112,29 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
   const [loading, setLoading] = useState(false);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
-  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+  const [, setStreamingMessageId] = useState<string | null>(null);
 
   // 用于滚动到最新消息的引用
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationContentRef = useRef<HTMLDivElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
 
-  // 获取集合列表
-  const fetchCollections = async () => {
+  // 获取集合列表 - 优化性能
+  const fetchCollections = useCallback(async () => {
     setCollectionsLoading(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/collections`);
+      const response = await api.collections.list();
       setCollections(response.data);
     } catch (error) {
       console.error('获取集合列表失败:', error);
-      message.error('获取集合列表失败');
+      // 错误已在api拦截器中处理，这里不需要重复显示
     } finally {
       setCollectionsLoading(false);
     }
-  };
+  }, []);
 
-  // 创建新对话
-  const createNewConversation = () => {
+  // 创建新对话 - 优化性能
+  const createNewConversation = useCallback(() => {
     const newConversation: Conversation = {
       id: `conv_${Date.now()}`,
       title: '新对话',
@@ -111,18 +144,18 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
     const updatedConversations = [newConversation, ...conversations];
     setConversations(updatedConversations);
     setCurrentConversation(newConversation);
-  };
+  }, [conversations]);
 
-  // 清空对话历史
-  const clearConversations = () => {
+  // 清空对话历史 - 优化性能
+  const clearConversations = useCallback(() => {
     setConversations([]);
     setCurrentConversation(null);
     localStorage.removeItem('chromadb_conversations');
     message.success('对话历史已清空');
-  };
+  }, []);
 
-  // 切换查询结果的展开/收起状态
-  const toggleResultExpansion = (resultId: string) => {
+  // 切换查询结果的展开/收起状态 - 优化性能
+  const toggleResultExpansion = useCallback((resultId: string) => {
     setExpandedResults(prev => {
       const newSet = new Set(prev);
       if (newSet.has(resultId)) {
@@ -132,7 +165,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
       }
       return newSet;
     });
-  };
+  }, []);
 
   // 滚动到最新消息（让最新消息显示在对话框顶部）
   const scrollToLatestMessage = () => {
@@ -208,15 +241,9 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
 
     try {
       // 调用新的LLM查询API（流式响应）
-      const response = await fetch(`${API_BASE_URL}/llm-query`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: queryText,
-          collections: selectedCollections,
-        }),
+      const response = await api.query.llm({
+        query: queryText,
+        collections: selectedCollections,
       });
 
       if (!response.ok) {
@@ -438,14 +465,14 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
     }
   };
 
-  // 保存对话历史到localStorage
-  const saveConversations = (convs: Conversation[]) => {
+  // 保存对话历史到localStorage - 优化性能
+  const saveConversations = useCallback((convs: Conversation[]) => {
     try {
       localStorage.setItem('chromadb_conversations', JSON.stringify(convs));
     } catch (error) {
       console.error('保存对话历史失败:', error);
     }
-  };
+  }, []);
 
   // 组件挂载时获取集合列表和对话历史
   useEffect(() => {
@@ -481,14 +508,14 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
                 <Button
                   type="primary"
                   icon={<PlusOutlined />}
-                  onClick={() => navigate('/collections')}
+                  onClick={onNavigateToCollections}
                   key="create"
                 >
                   创建集合
                 </Button>,
                 <Button
                   icon={<ArrowLeftOutlined />}
-                  onClick={() => navigate('/collections')}
+                  onClick={onNavigateToCollections}
                   key="back"
                 >
                   返回集合管理
@@ -501,96 +528,264 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
     );
   }
 
-  return (
-    <Layout style={{ height: '100vh' }}>
-      {/* 左侧对话历史 */}
-      <Sider width={300} style={{ background: '#fff', borderRight: '1px solid #f0f0f0' }}>
-        <div style={{ padding: '16px' }}>
-          <Space direction="vertical" style={{ width: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Title level={4} style={{ margin: 0 }}>
-                <MessageOutlined style={{ marginRight: 8 }} />
-                对话历史
-              </Title>
-              <Space>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<DeleteOutlined />}
-                  onClick={clearConversations}
-                  disabled={conversations.length === 0}
-                  title="清空对话历史"
-                />
-                <Button type="primary" size="small" onClick={createNewConversation}>
-                  新对话
-                </Button>
-              </Space>
-            </div>
-            
-            <List
+  // 渲染对话历史内容 - 提取为独立组件以便复用，并使用useMemo优化
+  const renderConversationHistory = useMemo(() => (
+    <div style={{ padding: responsive.isMobile ? '16px' : '24px' }}>
+      <Space direction="vertical" style={{ width: '100%' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Title level={4} style={{ margin: 0 }}>
+            <MessageOutlined style={{ marginRight: 8, color: '#3b82f6' }} />
+            <span style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              对话历史
+            </span>
+          </Title>
+          <Space>
+            <Button
+              type="text"
               size="small"
-              dataSource={conversations}
-              renderItem={(conversation) => (
-                <List.Item
-                  style={{
-                    cursor: 'pointer',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    backgroundColor: currentConversation?.id === conversation.id ? '#e6f7ff' : 'transparent',
-                    border: currentConversation?.id === conversation.id ? '1px solid #91d5ff' : '1px solid transparent'
-                  }}
-                  onClick={() => setCurrentConversation(conversation)}
-                >
-                  <List.Item.Meta
-                    title={<Text ellipsis style={{ fontSize: '14px' }}>{conversation.title}</Text>}
-                    description={
-                      <Text type="secondary" style={{ fontSize: '12px' }}>
-                        {new Date(conversation.created_at).toLocaleString()}
-                      </Text>
-                    }
-                  />
-                </List.Item>
-              )}
-              locale={{
-                emptyText: (
-                  <div style={{ textAlign: 'center', padding: '20px' }}>
-                    <MessageOutlined style={{ fontSize: '24px', color: '#d9d9d9', marginBottom: '8px' }} />
-                    <div style={{ color: '#999' }}>暂无对话历史</div>
-                    <div style={{ color: '#ccc', fontSize: '12px' }}>点击"新对话"开始查询</div>
-                  </div>
-                )
+              icon={<DeleteOutlined />}
+              onClick={clearConversations}
+              disabled={conversations.length === 0}
+              title="清空对话历史"
+              style={{ 
+                borderRadius: '8px',
+                opacity: conversations.length === 0 ? 0.5 : 1
               }}
             />
+            <Button 
+              type="primary" 
+              size="small" 
+              onClick={createNewConversation}
+              style={{ 
+                borderRadius: '8px',
+                height: '32px',
+                padding: '0 16px'
+              }}
+            >
+              新对话
+            </Button>
           </Space>
         </div>
-      </Sider>
+        
+        <List
+          size="small"
+          dataSource={conversations}
+          renderItem={(conversation) => (
+            <List.Item
+              style={{
+                cursor: 'pointer',
+                padding: '12px 16px',
+                borderRadius: '6px',
+                backgroundColor: currentConversation?.id === conversation.id
+                  ? '#f3f4f6'
+                  : 'transparent',
+                border: currentConversation?.id === conversation.id
+                  ? '1px solid #e5e7eb'
+                  : '1px solid transparent',
+                marginBottom: '8px',
+                transition: 'background-color 0.2s ease',
+              }}
+              onClick={() => {
+                setCurrentConversation(conversation);
+                if (responsive.isMobile) {
+                  setLeftDrawerVisible(false);
+                }
+              }}
+              onMouseEnter={(e) => {
+                if (currentConversation?.id !== conversation.id) {
+                  e.currentTarget.style.backgroundColor = '#f9fafb';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (currentConversation?.id !== conversation.id) {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }
+              }}
+            >
+              <List.Item.Meta
+                title={
+                  <Text
+                    ellipsis
+                    style={{
+                      fontSize: '14px',
+                      fontWeight: currentConversation?.id === conversation.id ? 600 : 500,
+                      color: currentConversation?.id === conversation.id ? '#1d4ed8' : 'var(--ant-color-text)'
+                    }}
+                  >
+                    {conversation.title}
+                  </Text>
+                }
+                description={
+                  <Text type="secondary" style={{ fontSize: '12px' }}>
+                    {new Date(conversation.created_at).toLocaleString()}
+                  </Text>
+                }
+              />
+            </List.Item>
+          )}
+          locale={{
+            emptyText: (
+              <div style={{ textAlign: 'center', padding: '20px' }}>
+                <MessageOutlined style={{ fontSize: '24px', color: '#d9d9d9', marginBottom: '8px' }} />
+                <div style={{ color: '#999' }}>暂无对话历史</div>
+                <div style={{ color: '#ccc', fontSize: '12px' }}>点击"新对话"开始查询</div>
+              </div>
+            )
+          }}
+        />
+      </Space>
+    </div>
+  ), [responsive.isMobile, conversations, currentConversation, clearConversations, createNewConversation]);
+
+  // 渲染查询输入区域 - 提取为独立组件以便复用，并使用useMemo优化
+  const renderQueryInput = useMemo(() => (
+    <div style={{ padding: responsive.isMobile ? '16px' : '24px' }}>
+      <Space direction="vertical" style={{ width: '100%' }} size="large">
+        <div>
+          <Title level={5} style={{ marginBottom: '16px' }}>
+            <DatabaseOutlined style={{ marginRight: 8, color: '#3b82f6' }} />
+            <span style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              选择集合
+            </span>
+          </Title>
+          <Select
+            mode="multiple"
+            placeholder="选择要查询的集合"
+            style={{ width: '100%' }}
+            value={selectedCollections}
+            onChange={setSelectedCollections}
+            loading={collectionsLoading}
+            maxTagCount="responsive"
+
+          >
+            {collections.map(collection => (
+              <Select.Option key={collection.display_name} value={collection.display_name}>
+                <Space>
+                  <DatabaseOutlined />
+                  <span>{collection.display_name}</span>
+                  <Text type="secondary">({collection.count})</Text>
+                </Space>
+              </Select.Option>
+            ))}
+          </Select>
+        </div>
+
+        <div>
+          <Title level={5} style={{ marginBottom: '16px' }}>
+            <span style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              查询内容
+            </span>
+          </Title>
+          <TextArea
+            placeholder="输入您要查询的内容..."
+            value={queryText}
+            onChange={(e) => setQueryText(e.target.value)}
+            rows={responsive.isMobile ? 3 : 4}
+            onPressEnter={(e) => {
+              if (!e.shiftKey) {
+                e.preventDefault();
+                handleQuery();
+              }
+            }}
+            style={{ 
+              borderRadius: '12px',
+              fontSize: '14px',
+              lineHeight: '1.5'
+            }}
+          />
+          <div style={{ marginTop: '8px', textAlign: 'right' }}>
+            <Text type="secondary" style={{ fontSize: '12px' }}>
+              Enter 发送，Shift+Enter 换行
+            </Text>
+          </div>
+        </div>
+
+        <Button
+          type="primary"
+          icon={<SendOutlined />}
+          onClick={() => {
+            handleQuery();
+            if (responsive.isMobile) {
+              setRightDrawerVisible(false);
+            }
+          }}
+          loading={loading}
+          disabled={!queryText.trim() || selectedCollections.length === 0}
+          style={{ 
+            width: '100%',
+            height: responsive.isMobile ? '52px' : '48px',
+            fontSize: '16px',
+            fontWeight: 600,
+            borderRadius: '12px'
+          }}
+        >
+          {loading ? '查询中...' : '发送查询'}
+        </Button>
+      </Space>
+    </div>
+  ), [responsive.isMobile, collections, selectedCollections, collectionsLoading, queryText, loading, handleQuery]);
+
+  return (
+    <Layout style={{ height: '100vh' }}>
+      {/* 桌面端左侧对话历史 */}
+      {!responsive.isMobile && (
+        <Sider 
+          width={leftCollapsed ? 0 : 320}
+          collapsible
+          collapsed={leftCollapsed}
+          trigger={null}
+          style={{
+            background: '#ffffff',
+            borderRight: '1px solid #e5e7eb',
+            boxShadow: '1px 0 3px rgba(0, 0, 0, 0.1)'
+          }}
+        >
+          {!leftCollapsed && renderConversationHistory}
+        </Sider>
+      )}
 
       <Layout>
         {/* 中间对话内容区域 */}
-        <Content style={{ padding: '16px', display: 'flex', flexDirection: 'column' }}>
+        <Content style={{ padding: '24px', display: 'flex', flexDirection: 'column' }} className="fade-in-up">
           <Card
             title={
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Space>
-                  <SearchOutlined />
-                  <span>查询对话</span>
+                  <SearchOutlined style={{ color: '#3b82f6' }} />
+                  <span style={{ 
+                    fontSize: '18px', 
+                    fontWeight: 600,
+                    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent'
+                  }}>
+                    查询对话
+                  </span>
                   {currentConversation && (
-                    <Text type="secondary" style={{ fontSize: '14px' }}>
+                    <Text type="secondary" style={{ fontSize: '14px', fontWeight: 500 }}>
                       - {currentConversation.title}
                     </Text>
                   )}
                 </Space>
-                <Button
-                  icon={<ArrowLeftOutlined />}
-                  onClick={() => navigate('/collections')}
-                  type="text"
-                >
-                  返回集合管理
-                </Button>
+                <Space>
+                  <ThemeToggle />
+                  <Button
+                    icon={<ArrowLeftOutlined />}
+                    onClick={() => navigate('/collections')}
+                    type="text"
+                    style={{ 
+                      borderRadius: '8px',
+                      height: '36px',
+                      padding: '0 16px'
+                    }}
+                  >
+                    返回集合管理
+                  </Button>
+                </Space>
               </div>
             }
             style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
-            bodyStyle={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px' }}
+            bodyStyle={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '24px' }}
           >
             {currentConversation ? (
               <div
@@ -613,14 +808,18 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
                           <div style={{
                             display: 'flex',
                             justifyContent: message.type === 'user' ? 'flex-end' : 'flex-start',
-                            marginBottom: '8px'
+                            marginBottom: '16px'
                           }}>
                             <div style={{
-                              maxWidth: '70%',
+                              maxWidth: '75%',
                               padding: '12px 16px',
-                              borderRadius: '12px',
-                              backgroundColor: message.type === 'user' ? '#1890ff' : '#f6f6f6',
-                              color: message.type === 'user' ? '#fff' : '#000'
+                              borderRadius: message.type === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
+                              background: message.type === 'user'
+                                ? '#3b82f6'
+                                : '#ffffff',
+                              color: message.type === 'user' ? '#fff' : '#1f2937',
+                              border: message.type === 'user' ? 'none' : '1px solid #e5e7eb',
+                              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
                             }}>
                               <div>{message.content}</div>
                               {message.selected_collections && (
@@ -645,14 +844,16 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
                                   }}>
                                     {message.llm_response}
                                     {message.is_streaming && (
-                                      <span style={{
-                                        display: 'inline-block',
-                                        width: '8px',
-                                        height: '20px',
-                                        backgroundColor: message.type === 'user' ? '#fff' : '#1890ff',
-                                        marginLeft: '2px',
-                                        animation: 'blink 1s infinite'
-                                      }} />
+                                      <span 
+                                        style={{
+                                          display: 'inline-block',
+                                          width: '8px',
+                                          height: '20px',
+                                          backgroundColor: message.type === 'user' ? '#fff' : '#1890ff',
+                                          marginLeft: '2px'
+                                        }}
+                                        className="typing-cursor"
+                                      />
                                     )}
                                   </div>
                                 </div>
@@ -817,70 +1018,96 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onCollectionsChan
           </Card>
         </Content>
 
-        {/* 右侧查询输入区域 */}
-        <Sider width={350} style={{ background: '#fff', borderLeft: '1px solid #f0f0f0' }}>
-          <div style={{ padding: '16px' }}>
-            <Space direction="vertical" style={{ width: '100%' }} size="large">
-              <div>
-                <Title level={5}>
-                  <DatabaseOutlined style={{ marginRight: 8 }} />
-                  选择集合
-                </Title>
-                <Select
-                  mode="multiple"
-                  placeholder="选择要查询的集合"
-                  style={{ width: '100%' }}
-                  value={selectedCollections}
-                  onChange={setSelectedCollections}
-                  loading={collectionsLoading}
-                  maxTagCount="responsive"
-                >
-                  {collections.map(collection => (
-                    <Select.Option key={collection.display_name} value={collection.display_name}>
-                      <Space>
-                        <DatabaseOutlined />
-                        <span>{collection.display_name}</span>
-                        <Text type="secondary">({collection.count})</Text>
-                      </Space>
-                    </Select.Option>
-                  ))}
-                </Select>
-              </div>
-
-              <div>
-                <Title level={5}>查询内容</Title>
-                <TextArea
-                  placeholder="输入您要查询的内容..."
-                  value={queryText}
-                  onChange={(e) => setQueryText(e.target.value)}
-                  rows={4}
-                  onPressEnter={(e) => {
-                    if (!e.shiftKey) {
-                      e.preventDefault();
-                      handleQuery();
-                    }
-                  }}
-                />
-                <div style={{ marginTop: '8px', textAlign: 'right' }}>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>
-                    Enter 发送，Shift+Enter 换行
-                  </Text>
-                </div>
-              </div>
-
-              <Button
-                type="primary"
-                icon={<SendOutlined />}
-                onClick={handleQuery}
-                loading={loading}
-                disabled={!queryText.trim() || selectedCollections.length === 0}
-                style={{ width: '100%' }}
-              >
-                {loading ? '查询中...' : '发送查询'}
-              </Button>
-            </Space>
-          </div>
+      {/* 桌面端右侧查询输入区域 */}
+      {!responsive.isMobile && (
+        <Sider 
+          width={rightCollapsed ? 0 : 380}
+          collapsible
+          collapsed={rightCollapsed}
+          trigger={null}
+          style={{
+            background: '#ffffff',
+            borderLeft: '1px solid #e5e7eb',
+            boxShadow: '-1px 0 3px rgba(0, 0, 0, 0.1)'
+          }}
+        >
+          {!rightCollapsed && renderQueryInput}
         </Sider>
+      )}
+
+      {/* 移动端抽屉 - 对话历史 */}
+      <Drawer
+        title="对话历史"
+        placement="left"
+        onClose={() => setLeftDrawerVisible(false)}
+        open={leftDrawerVisible}
+        width={responsive.screenWidth > 400 ? 320 : '85%'}
+        bodyStyle={{ padding: 0 }}
+      >
+        {renderConversationHistory}
+      </Drawer>
+
+      {/* 移动端抽屉 - 查询输入 */}
+      <Drawer
+        title="查询设置"
+        placement="right"
+        onClose={() => setRightDrawerVisible(false)}
+        open={rightDrawerVisible}
+        width={responsive.screenWidth > 400 ? 360 : '90%'}
+        bodyStyle={{ padding: 0 }}
+      >
+        {renderQueryInput}
+      </Drawer>
+
+      {/* 移动端悬浮按钮组 */}
+      {responsive.isMobile && (
+        <>
+          <FloatButton.Group
+            shape="circle"
+            style={{ right: 16, bottom: 80 }}
+          >
+            <FloatButton
+              icon={<MessageOutlined />}
+              tooltip="对话历史"
+              onClick={() => setLeftDrawerVisible(true)}
+            />
+            <FloatButton
+              icon={<SettingOutlined />}
+              tooltip="查询设置"
+              onClick={() => setRightDrawerVisible(true)}
+            />
+          </FloatButton.Group>
+
+          {/* 移动端快速查询按钮 */}
+          {queryText.trim() && selectedCollections.length > 0 && (
+            <FloatButton
+              icon={<SendOutlined />}
+              type="primary"
+              style={{ right: 16, bottom: 16 }}
+              onClick={handleQuery}
+              tooltip="发送查询"
+            />
+          )}
+        </>
+      )}
+
+      {/* 桌面端侧边栏展开/收起按钮 */}
+      {!responsive.isMobile && (
+        <>
+          <FloatButton
+            icon={<MenuOutlined />}
+            style={{ left: leftCollapsed ? 16 : 340, top: 100 }}
+            onClick={() => setLeftCollapsed(!leftCollapsed)}
+            tooltip={leftCollapsed ? "展开对话历史" : "收起对话历史"}
+          />
+          <FloatButton
+            icon={<SettingOutlined />}
+            style={{ right: rightCollapsed ? 16 : 400, top: 100 }}
+            onClick={() => setRightCollapsed(!rightCollapsed)}
+            tooltip={rightCollapsed ? "展开查询设置" : "收起查询设置"}
+          />
+        </>
+      )}
       </Layout>
     </Layout>
   );

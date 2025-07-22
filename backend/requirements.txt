@@ -12,8 +12,8 @@ pytest-asyncio==0.21.1
 # LLM和嵌入模型依赖
 dashscope>=1.14.0
 # 文档处理依赖 - 使用兼容版本
-langchain-text-splitters==0.0.1
-langchain-core==0.1.52
+langchain-text-splitters>=0.2.0
+langchain-core>=0.2.0
 # NumPy版本兼容性
 numpy<2.0
 # 语义分块依赖

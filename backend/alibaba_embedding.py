@@ -161,40 +161,4 @@ def create_alibaba_embedding_function(
     )
 
 
-# 测试函数
-def test_alibaba_embedding():
-    """测试阿里云嵌入函数"""
-    try:
-        # 创建嵌入函数
-        embedding_func = create_alibaba_embedding_function()
-        
-        # 测试文本
-        test_texts = [
-            "这是一个测试文档",
-            "阿里云百炼平台提供强大的AI能力"
-        ]
-        
-        # 生成嵌入向量
-        embeddings = embedding_func(test_texts)
-        
-        print(f"测试成功！")
-        print(f"输入文本数量: {len(test_texts)}")
-        print(f"生成向量数量: {len(embeddings)}")
-        print(f"向量维度: {len(embeddings[0]) if embeddings else 0}")
-        print(f"第一个向量前10个值: {embeddings[0][:10] if embeddings else []}")
-        
-        return True
-        
-    except Exception as e:
-        print(f"测试失败: {str(e)}")
-        return False
 
-
-if __name__ == "__main__":
-    # 设置日志级别
-    logging.basicConfig(level=logging.INFO)
-
-    # 加载环境变量
-    from dotenv import load_dotenv
-    load_dotenv()
-    test_alibaba_embedding()

@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Layout,
   Card,
@@ -9,7 +8,6 @@ import {
   Tag,
   Descriptions,
   Tabs,
-  List,
   Table,
   Empty,
   Spin,
@@ -25,6 +23,8 @@ import {
   Alert,
   Row,
   Col,
+  Statistic,
+  Popconfirm,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -37,15 +37,14 @@ import {
   InboxOutlined,
   SettingOutlined,
   DeleteOutlined,
-  ExclamationCircleOutlined,
+  FolderOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import { api, API_BASE_URL } from '../config/api';
+import ThemeToggle from './ThemeToggle';
 
 const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
-
-// API基础URL
-const API_BASE_URL = '/api';
 
 // 文档信息接口
 interface DocumentInfo {
@@ -67,11 +66,13 @@ interface CollectionDetail {
 }
 
 // RAG分块方式枚举
-enum ChunkingMethod {
-  RECURSIVE = 'recursive',
-  FIXED_SIZE = 'fixed_size',
-  SEMANTIC = 'semantic'
-}
+const ChunkingMethod = {
+  RECURSIVE: 'recursive',
+  FIXED_SIZE: 'fixed_size',
+  SEMANTIC: 'semantic'
+} as const;
+
+type ChunkingMethod = typeof ChunkingMethod[keyof typeof ChunkingMethod];
 
 // RAG分块配置接口
 interface ChunkingConfig {
@@ -82,11 +83,7 @@ interface ChunkingConfig {
   semantic_threshold?: number;
 }
 
-// 文档上传请求接口
-interface DocumentUploadRequest {
-  file: File;
-  chunking_config: ChunkingConfig;
-}
+
 
 // 上传进度接口
 interface UploadProgress {
@@ -97,12 +94,36 @@ interface UploadProgress {
   total_chunks?: number;
 }
 
-const CollectionDetail: React.FC = () => {
-  const { collectionName } = useParams<{ collectionName: string }>();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+interface CollectionDetailProps {
+  collectionName: string;
+  onBack: () => void;
+}
+
+const CollectionDetail: React.FC<CollectionDetailProps> = ({
+  collectionName,
+  onBack
+}) => {
   const [collectionDetail, setCollectionDetail] = useState<CollectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // 辅助函数：获取向量维度
+  const getVectorDimension = () => {
+    if (!collectionDetail) return '未知';
+
+    // 优先使用元数据中的向量维度
+    const metadataDimension = collectionDetail.metadata?.vector_dimension;
+    if (metadataDimension) return metadataDimension;
+
+    // 如果元数据中没有，尝试从第一个文档的向量中获取
+    if (collectionDetail.sample_documents && collectionDetail.sample_documents.length > 0) {
+      const firstDoc = collectionDetail.sample_documents[0];
+      if (firstDoc.embedding && firstDoc.embedding.length > 0) {
+        return firstDoc.embedding.length;
+      }
+    }
+
+    return '未知';
+  };
 
   // 文档上传相关状态
   const [uploadModalVisible, setUploadModalVisible] = useState(false);
@@ -117,20 +138,17 @@ const CollectionDetail: React.FC = () => {
   // 获取集合详细信息
   const fetchCollectionDetail = async () => {
     if (!collectionName) return;
-    
+
     setLoading(true);
     try {
-      const response = await axios.get(
-        `${API_BASE_URL}/collections/${encodeURIComponent(collectionName)}/detail?limit=20`
-      );
+      const response = await api.collections.detail(collectionName, 20);
       setCollectionDetail(response.data);
     } catch (error: any) {
       console.error('获取集合详细信息失败:', error);
-      const errorMessage = error.response?.data?.detail || '获取集合详细信息失败';
-      message.error(errorMessage);
+      // 错误已在api拦截器中处理
       // 如果集合不存在，返回列表页面
       if (error.response?.status === 404) {
-        navigate('/');
+        onBack();
       }
     } finally {
       setLoading(false);
@@ -139,22 +157,7 @@ const CollectionDetail: React.FC = () => {
 
   // 返回集合列表
   const handleGoBack = () => {
-    // 获取来源页面参数
-    const fromPage = searchParams.get('from');
-
-    // 根据来源页面决定返回路径
-    switch (fromPage) {
-      case 'collections':
-        navigate('/collections');
-        break;
-      case 'query':
-        navigate('/query');
-        break;
-      default:
-        // 默认返回到集合管理页面
-        navigate('/collections');
-        break;
-    }
+    onBack();
   };
 
   // 处理文件选择
@@ -237,19 +240,10 @@ const CollectionDetail: React.FC = () => {
       return;
     }
 
-    // 直接确认删除，跳过Modal.confirm（临时解决方案）
-    const confirmed = window.confirm(`您确定要删除文档 "${fileName}" 吗？\n\n此操作将删除该文档的所有分块，删除后无法恢复！`);
-
-    if (!confirmed) {
-      return;
-    }
-
     setDeleteLoading(fileName);
     try {
       console.log('Calling delete API...');
-      await axios.delete(
-        `${API_BASE_URL}/collections/${encodeURIComponent(collectionName)}/documents/${encodeURIComponent(fileName)}`
-      );
+      await api.documents.delete(collectionName, fileName);
 
       console.log('Delete API call successful');
       message.success(`文档 "${fileName}" 删除成功`);
@@ -257,8 +251,7 @@ const CollectionDetail: React.FC = () => {
       fetchCollectionDetail();
     } catch (error: any) {
       console.error('删除文档失败:', error);
-      const errorMessage = error.response?.data?.detail || '删除文档失败';
-      message.error(errorMessage);
+      // 错误已在api拦截器中处理
     } finally {
       setDeleteLoading(null);
     }
@@ -335,15 +328,7 @@ const CollectionDetail: React.FC = () => {
 
       // 实际的API调用
       try {
-        const response = await axios.post(
-          `${API_BASE_URL}/collections/${encodeURIComponent(collectionName)}/upload`,
-          formData,
-          {
-            headers: {
-              'Content-Type': 'multipart/form-data'
-            }
-          }
-        );
+        const response = await api.documents.upload(collectionName, formData);
 
         clearInterval(progressInterval);
         setUploadProgress({
@@ -493,29 +478,84 @@ const CollectionDetail: React.FC = () => {
               <Breadcrumb.Item>{collectionDetail.display_name}</Breadcrumb.Item>
             </Breadcrumb>
             <Title level={3} style={{ margin: 0 }}>
-              <DatabaseOutlined style={{ marginRight: 8 }} />
+              <DatabaseOutlined style={{ marginRight: 12 }} />
               {collectionDetail.display_name}
             </Title>
           </div>
-          <div className="header-actions">
+          <div className="header-actions slide-in-right">
+            <Button
+              icon={<ArrowLeftOutlined />}
+              onClick={onBack}
+              style={{ marginRight: 8 }}
+            >
+              返回列表
+            </Button>
+            <ThemeToggle />
             <Button
               type="primary"
               icon={<UploadOutlined />}
               onClick={openUploadModal}
+              style={{
+                background: '#10b981',
+                borderColor: '#10b981',
+                height: '36px',
+                padding: '0 16px',
+                fontWeight: 500
+              }}
             >
               上传文档
-            </Button>
-            <Button
-              icon={<ArrowLeftOutlined />}
-              onClick={handleGoBack}
-            >
-              返回列表
             </Button>
           </div>
         </div>
       </Header>
 
-      <Content>
+      <Content className="fade-in-up">
+        {/* 统计信息卡片 */}
+        <Row gutter={16} style={{ marginBottom: 24 }}>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="文档总数"
+                value={collectionDetail.count}
+                prefix={<FileTextOutlined />}
+                valueStyle={{ color: '#1890ff' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="向量维度"
+                value={getVectorDimension()}
+                suffix="维"
+                prefix={<DatabaseOutlined />}
+                valueStyle={{ color: '#52c41a' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="文件数量"
+                value={collectionDetail.uploaded_files?.length || 0}
+                prefix={<FolderOutlined />}
+                valueStyle={{ color: '#fa8c16' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="分块方法"
+                value={collectionDetail.chunk_statistics?.methods_used?.length || 0}
+                suffix="种"
+                prefix={<SettingOutlined />}
+                valueStyle={{ color: '#722ed1' }}
+              />
+            </Card>
+          </Col>
+        </Row>
+
         <Card>
           <Tabs
             defaultActiveKey="documents"
@@ -523,21 +563,49 @@ const CollectionDetail: React.FC = () => {
               {
                 key: 'documents',
                 label: (
-                  <span>
-                    <FileTextOutlined />
-                    文档内容 ({collectionDetail.count > 0 ?
-                      (collectionDetail.documents.length > 0 ?
-                        `全部 ${collectionDetail.documents.length}` :
-                        `样本 ${collectionDetail.sample_documents.length}`) :
-                      '0'})
+                  <span style={{ fontSize: '16px', fontWeight: 500 }}>
+                    <FileTextOutlined style={{ marginRight: 8 }} />
+                    文档列表
                   </span>
                 ),
                 children: (
-                  collectionDetail.count === 0 ? (
-                    <Empty description="该集合暂无文档" />
-                  ) : (
-                    <div>
-                      {collectionDetail.count > 100 && (
+                  <div>
+                    {/* 操作栏 */}
+                    <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <Text strong style={{ fontSize: '16px' }}>
+                          文档管理
+                        </Text>
+                        <Text type="secondary" style={{ marginLeft: 8 }}>
+                          ({collectionDetail.count} 个文档)
+                        </Text>
+                      </div>
+                      <Button
+                        type="primary"
+                        icon={<UploadOutlined />}
+                        onClick={() => setUploadModalVisible(true)}
+                      >
+                        上传文档
+                      </Button>
+                    </div>
+
+                    {collectionDetail.count === 0 ? (
+                      <Empty
+                        description="该集合暂无文档"
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        style={{ margin: '40px 0' }}
+                      >
+                        <Button
+                          type="primary"
+                          icon={<UploadOutlined />}
+                          onClick={() => setUploadModalVisible(true)}
+                        >
+                          上传第一个文档
+                        </Button>
+                      </Empty>
+                    ) : (
+                      <div>
+                        {collectionDetail.count > 100 && (
                         <div style={{ marginBottom: 16, padding: 12, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6 }}>
                           <Text type="secondary">
                             <InfoCircleOutlined style={{ marginRight: 4 }} />
@@ -647,17 +715,31 @@ const CollectionDetail: React.FC = () => {
                             key: 'embedding',
                             width: 120,
                             align: 'center',
-                            render: (embedding) => (
-                              embedding ? (
-                                <Tag color="purple" style={{ fontSize: '11px' }}>
-                                  {embedding.length}维
+                            render: (embedding) => {
+                              const expectedDimension = getVectorDimension();
+                              const actualDimension = embedding ? embedding.length : 0;
+
+                              if (!embedding) {
+                                return (
+                                  <Tag color="default" style={{ fontSize: '11px' }}>
+                                    无向量
+                                  </Tag>
+                                );
+                              }
+
+                              // 检查维度是否一致
+                              const isConsistent = expectedDimension === '未知' || actualDimension === parseInt(expectedDimension);
+
+                              return (
+                                <Tag
+                                  color={isConsistent ? "purple" : "orange"}
+                                  style={{ fontSize: '11px' }}
+                                  title={isConsistent ? undefined : `期望维度: ${expectedDimension}`}
+                                >
+                                  {actualDimension}维
                                 </Tag>
-                              ) : (
-                                <Tag color="default" style={{ fontSize: '11px' }}>
-                                  无向量
-                                </Tag>
-                              )
-                            )
+                              );
+                            }
                           },
                           {
                             title: '块信息',
@@ -701,15 +783,31 @@ const CollectionDetail: React.FC = () => {
                             align: 'center',
                             render: (_, record) => (
                               <Space size="small">
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<DeleteOutlined />}
-                                  danger
-                                  loading={deleteLoading === record.fileName}
-                                  onClick={() => handleDocumentDelete(record.fileName)}
-                                  title="删除文档"
-                                />
+                                <Popconfirm
+                                  title="确认删除文档"
+                                  description={
+                                    <div>
+                                      <p>确定要删除文档 <strong>"{record.fileName}"</strong> 吗？</p>
+                                      <p style={{ color: '#ff4d4f', fontSize: '12px', margin: 0 }}>
+                                        此操作将删除该文档的所有分块，删除后无法恢复！
+                                      </p>
+                                    </div>
+                                  }
+                                  onConfirm={() => handleDocumentDelete(record.fileName)}
+                                  okText="确定删除"
+                                  cancelText="取消"
+                                  okType="danger"
+                                  placement="topRight"
+                                >
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<DeleteOutlined />}
+                                    danger
+                                    loading={deleteLoading === record.fileName}
+                                    title="删除文档"
+                                  />
+                                </Popconfirm>
                               </Space>
                             )
                           }
@@ -725,16 +823,17 @@ const CollectionDetail: React.FC = () => {
                         bordered
                         scroll={{ x: 1200 }}
                       />
-                    </div>
-                  )
+                      </div>
+                    )}
+                  </div>
                 )
               },
 
               {
                 key: 'basic',
                 label: (
-                  <span>
-                    <InfoCircleOutlined />
+                  <span style={{ fontSize: '16px', fontWeight: 500 }}>
+                    <InfoCircleOutlined style={{ marginRight: 8 }} />
                     基本信息
                   </span>
                 ),
@@ -754,7 +853,7 @@ const CollectionDetail: React.FC = () => {
                     <Descriptions.Item label="向量维度">
                       <Space>
                         <Tag color="purple">
-                          {collectionDetail.metadata?.vector_dimension || '未知'} 维
+                          {getVectorDimension()} 维
                         </Tag>
                         <Text type="secondary" style={{ fontSize: '12px' }}>
                           {collectionDetail.metadata?.embedding_model === 'alibaba-text-embedding-v4'
@@ -807,16 +906,32 @@ const CollectionDetail: React.FC = () => {
       {/* 文档上传模态框 */}
       <Modal
         title={
-          <Space>
-            <UploadOutlined />
-            上传文档到集合：{collectionDetail?.display_name}
-          </Space>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{
+              width: '36px',
+              height: '36px',
+              background: '#10b981',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <UploadOutlined style={{ color: 'white', fontSize: '18px' }} />
+            </div>
+            <div>
+              <div style={{ fontSize: '18px', fontWeight: 600 }}>上传文档</div>
+              <div style={{ fontSize: '14px', color: '#666', marginTop: '2px' }}>
+                到集合：{collectionDetail?.display_name}
+              </div>
+            </div>
+          </div>
         }
         open={uploadModalVisible}
         onCancel={closeUploadModal}
         footer={null}
-        width={800}
+        width={900}
         centered
+        style={{ borderRadius: '16px' }}
       >
         <Form
           form={uploadForm}
