@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 ChromaDB Web Manager - 后端主应用
 支持中文集合名称的ChromaDB Web管理界面
@@ -18,13 +19,38 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 from alibaba_embedding import create_alibaba_embedding_function
+from vector_optimization import (
+    get_optimized_collection_metadata,
+    DEFAULT_OPTIMIZATION_CONFIG,
+    HIGH_PRECISION_CONFIG,
+    DistanceMetric,
+    calculate_optimized_similarity
+)
 from fastapi import UploadFile, File, Form
 import tempfile
 import time
 import json
 import asyncio
-from rag_chunking import RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config
-from llm_client import get_llm_client, init_llm_client
+from file_parsers import file_parser_manager, FileFormat
+
+# 延迟导入有问题的模块，避免启动时冲突
+def get_rag_chunker():
+    """延迟导入RAG分块器"""
+    try:
+        from rag_chunking import RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config
+        return RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config
+    except ImportError as e:
+        logger.warning(f"RAG分块功能不可用: {e}")
+        return None, None, None, None
+
+def get_llm_client_module():
+    """延迟导入LLM客户端"""
+    try:
+        from llm_client import get_llm_client, init_llm_client
+        return get_llm_client, init_llm_client
+    except ImportError as e:
+        logger.warning(f"LLM客户端功能不可用: {e}")
+        return None, None
 
 # 加载环境变量
 load_dotenv()
@@ -43,7 +69,7 @@ app = FastAPI(
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"],  # 前端开发服务器
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001", "http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -129,7 +155,7 @@ class AddDocumentRequest(BaseModel):
 
 class ChunkTextRequest(BaseModel):
     text: str
-    chunking_config: ChunkingConfig
+    chunking_config: dict  # 使用dict类型避免导入问题
 
 class FileUploadResponse(BaseModel):
     message: str
@@ -188,7 +214,17 @@ class DeleteDocumentResponse(BaseModel):
 async def startup_event():
     """应用启动时初始化ChromaDB客户端和LLM客户端"""
     init_chroma_client()
-    init_llm_client()
+
+    # 尝试初始化LLM客户端
+    get_llm_client_func, init_llm_client_func = get_llm_client_module()
+    if init_llm_client_func:
+        try:
+            init_llm_client_func()
+            logger.info("LLM客户端初始化成功")
+        except Exception as e:
+            logger.warning(f"LLM客户端初始化失败: {e}")
+    else:
+        logger.warning("LLM客户端模块不可用")
 
 @app.get("/")
 async def root():
@@ -452,26 +488,33 @@ async def create_collection(request: CreateCollectionRequest):
             if existing_metadata.get('original_name') == request.name:
                 raise HTTPException(status_code=400, detail=f"集合 '{request.name}' 已存在")
 
-        # 准备元数据，包含原始中文名称
-        metadata = request.metadata or {}
-        metadata['original_name'] = request.name
-        metadata['embedding_model'] = 'alibaba-text-embedding-v4'
-        metadata['vector_dimension'] = 1024
+        # 使用优化配置
+        optimization_config = HIGH_PRECISION_CONFIG
 
-        # 创建阿里云嵌入函数
+        # 准备元数据，包含原始中文名称和优化配置
+        base_metadata = request.metadata or {}
+        base_metadata['original_name'] = request.name
+        base_metadata['embedding_model'] = 'alibaba-text-embedding-v4'
+
+        # 应用向量优化配置
+        metadata = get_optimized_collection_metadata(optimization_config, base_metadata)
+
+        # 创建阿里云嵌入函数，使用优化的维度
         try:
-            alibaba_embedding_func = create_alibaba_embedding_function(dimension=1024)
-            logger.info(f"成功创建阿里云嵌入函数，维度: 1024")
+            alibaba_embedding_func = create_alibaba_embedding_function(dimension=optimization_config.vector_dimension)
+            logger.info(f"成功创建阿里云嵌入函数，维度: {optimization_config.vector_dimension}")
         except Exception as e:
             logger.error(f"创建阿里云嵌入函数失败: {e}")
             raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
 
-        # 创建集合，使用阿里云嵌入函数
+        # 创建集合，使用阿里云嵌入函数和优化的元数据
         collection = chroma_client.create_collection(
             name=encoded_name,
             metadata=metadata,
             embedding_function=alibaba_embedding_func
         )
+
+        logger.info(f"集合创建成功，使用优化配置: 距离度量={optimization_config.distance_metric}, 维度={optimization_config.vector_dimension}")
 
         return {
             "message": f"集合 '{request.name}' 创建成功",
@@ -690,14 +733,24 @@ async def upload_document(
     start_time = time.time()
 
     try:
-        # 验证文件格式
-        if not file.filename.lower().endswith('.txt'):
-            raise HTTPException(status_code=400, detail="只支持 .txt 格式文件")
+        # 验证文件名
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="文件名不能为空")
 
-        # 验证文件大小 (10MB限制)
+        # 验证文件格式
+        if not file_parser_manager.can_parse(file.filename):
+            supported_extensions = file_parser_manager.get_supported_extensions()
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的文件格式。支持的格式: {', '.join(supported_extensions)}"
+            )
+
+        # 读取文件内容
         content = await file.read()
-        if len(content) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="文件大小不能超过 10MB")
+
+        # 验证文件大小 (50MB限制，增加了限制以支持更多格式)
+        if len(content) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="文件大小不能超过 50MB")
 
         # 解析分块配置
         import json
@@ -707,8 +760,18 @@ async def upload_document(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"分块配置格式错误: {e}")
 
-        # 读取文件内容
-        text_content = content.decode('utf-8')
+        # 使用文件解析器解析文件
+        parse_result = file_parser_manager.parse_file(content, file.filename)
+
+        if not parse_result.success:
+            raise HTTPException(
+                status_code=400,
+                detail=f"文件解析失败: {parse_result.error_message}"
+            )
+
+        text_content = parse_result.content
+        if not text_content.strip():
+            raise HTTPException(status_code=400, detail="文件中未提取到有效文本内容")
 
         # 查找集合
         collections = chroma_client.list_collections()
@@ -726,6 +789,10 @@ async def upload_document(
             raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
 
         # 进行RAG分块
+        RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config = get_rag_chunker()
+        if RAGChunker is None:
+            raise HTTPException(status_code=500, detail="RAG分块功能不可用")
+
         chunker = RAGChunker()
         chunking_result = chunker.chunk_text(text_content, config)
 
@@ -734,26 +801,90 @@ async def upload_document(
         metadatas = []
         ids = []
 
-        for chunk in chunking_result.chunks:
-            documents.append(chunk.text)
+        # 处理表格文件的特殊情况
+        if parse_result.is_table and parse_result.table_data:
+            # 表格文件：每行数据作为一个文档
+            for row_idx, row_data in enumerate(parse_result.table_data):
+                # 构建文档内容
+                content_columns = [col for col, type_ in parse_result.column_analysis.items() if type_ == 'content']
+                metadata_columns = [col for col, type_ in parse_result.column_analysis.items() if type_ == 'metadata']
 
-            # 创建元数据
-            metadata = {
-                "file_name": file.filename,
-                "chunk_method": config.method.value,
-                "chunk_index": chunk.index,
-                "chunk_size": len(chunk.text),
-                "start_position": chunk.start_pos,
-                "end_position": chunk.end_pos,
-                "upload_time": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "total_chunks": chunking_result.total_chunks
-            }
-            metadatas.append(metadata)
+                # 内容部分
+                content_parts = []
+                for col in content_columns:
+                    if col in row_data and row_data[col] is not None and str(row_data[col]).strip():
+                        content_parts.append(f"{col}: {str(row_data[col]).strip()}")
 
-            # 生成文档ID
-            import uuid
-            chunk_id = f"{file.filename}_{chunk.index}_{str(uuid.uuid4())[:8]}"
-            ids.append(chunk_id)
+                if content_parts:
+                    document_text = " | ".join(content_parts)
+                else:
+                    # 如果没有内容列，使用所有列
+                    all_parts = []
+                    for col, value in row_data.items():
+                        if value is not None and str(value).strip():
+                            all_parts.append(f"{col}: {str(value).strip()}")
+                    document_text = " | ".join(all_parts)
+
+                documents.append(document_text)
+
+                # 创建元数据（包含表格的元数据列）
+                metadata = {
+                    "file_name": file.filename,
+                    "file_format": parse_result.file_format.value if parse_result.file_format else "unknown",
+                    "is_table": True,
+                    "row_index": row_idx,
+                    "upload_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "total_rows": len(parse_result.table_data)
+                }
+
+                # 添加表格的元数据列
+                for col in metadata_columns:
+                    if col in row_data and row_data[col] is not None:
+                        metadata[f"table_{col}"] = str(row_data[col])
+
+                # 添加文件解析的元数据
+                if parse_result.metadata:
+                    for key, value in parse_result.metadata.items():
+                        if key not in metadata:
+                            metadata[f"file_{key}"] = value
+
+                metadatas.append(metadata)
+
+                # 生成文档ID
+                import uuid
+                doc_id = f"{file.filename}_row_{row_idx}_{str(uuid.uuid4())[:8]}"
+                ids.append(doc_id)
+        else:
+            # 普通文件：使用分块处理
+            for chunk in chunking_result.chunks:
+                documents.append(chunk.text)
+
+                # 创建元数据
+                metadata = {
+                    "file_name": file.filename,
+                    "file_format": parse_result.file_format.value if parse_result.file_format else "unknown",
+                    "is_table": False,
+                    "chunk_method": config.method.value,
+                    "chunk_index": chunk.index,
+                    "chunk_size": len(chunk.text),
+                    "start_position": chunk.start_pos,
+                    "end_position": chunk.end_pos,
+                    "upload_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "total_chunks": chunking_result.total_chunks
+                }
+
+                # 添加文件解析的元数据
+                if parse_result.metadata:
+                    for key, value in parse_result.metadata.items():
+                        if key not in metadata:
+                            metadata[f"file_{key}"] = value
+
+                metadatas.append(metadata)
+
+                # 生成文档ID
+                import uuid
+                chunk_id = f"{file.filename}_{chunk.index}_{str(uuid.uuid4())[:8]}"
+                ids.append(chunk_id)
 
         # 检查集合是否使用阿里云嵌入模型
         collection_metadata = target_collection.metadata or {}
@@ -810,8 +941,14 @@ async def upload_document(
 
         processing_time = time.time() - start_time
 
+        # 构建响应消息
+        if parse_result.is_table:
+            message = f"表格文件 '{file.filename}' 上传成功，创建了 {len(documents)} 行数据"
+        else:
+            message = f"文档 '{file.filename}' 上传成功，创建了 {len(documents)} 个文档块"
+
         return FileUploadResponse(
-            message="文档上传并处理完成",
+            message=message,
             file_name=file.filename,
             chunks_created=len(documents),
             total_size=len(content),
@@ -824,6 +961,46 @@ async def upload_document(
     except Exception as e:
         logger.error(f"文档上传失败: {e}")
         raise HTTPException(status_code=500, detail=f"文档上传失败: {str(e)}")
+
+@app.get("/api/supported-formats")
+async def get_supported_formats():
+    """获取支持的文件格式"""
+    try:
+        supported_formats = file_parser_manager.get_supported_formats()
+        supported_extensions = file_parser_manager.get_supported_extensions()
+
+        format_info = {}
+        for format_ in supported_formats:
+            format_info[format_.value] = {
+                "extension": f".{format_.value}",
+                "description": _get_format_description(format_)
+            }
+
+        return {
+            "supported_formats": format_info,
+            "supported_extensions": supported_extensions,
+            "total_count": len(supported_formats)
+        }
+    except Exception as e:
+        logger.error(f"获取支持格式失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取支持格式失败: {str(e)}")
+
+def _get_format_description(format_: FileFormat) -> str:
+    """获取文件格式描述"""
+    descriptions = {
+        FileFormat.TXT: "纯文本文件",
+        FileFormat.PDF: "PDF文档",
+        FileFormat.DOCX: "Word文档 (新格式)",
+        FileFormat.DOC: "Word文档 (旧格式)",
+        FileFormat.PPTX: "PowerPoint演示文稿 (新格式)",
+        FileFormat.PPT: "PowerPoint演示文稿 (旧格式)",
+        FileFormat.MARKDOWN: "Markdown文档",
+        FileFormat.RTF: "富文本格式文档",
+        FileFormat.XLSX: "Excel工作簿 (新格式)",
+        FileFormat.XLS: "Excel工作簿 (旧格式)",
+        FileFormat.CSV: "逗号分隔值文件"
+    }
+    return descriptions.get(format_, "未知格式")
 
 @app.delete("/api/collections/{collection_name}/documents/{file_name}", response_model=DeleteDocumentResponse)
 async def delete_document_by_filename(collection_name: str, file_name: str):
@@ -905,6 +1082,10 @@ async def chunk_text(collection_name: str, request: ChunkTextRequest):
             raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
 
         # 进行RAG分块
+        RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config = get_rag_chunker()
+        if RAGChunker is None:
+            raise HTTPException(status_code=500, detail="RAG分块功能不可用")
+
         chunker = RAGChunker()
         chunking_result = chunker.chunk_text(request.text, request.chunking_config)
 
@@ -1023,15 +1204,27 @@ async def query_collections(request: QueryRequest):
 
                 # 处理查询结果
                 if search_results and search_results.get('ids') and search_results['ids'][0]:
+                    # 获取集合的距离度量类型
+                    collection_metadata = collection.metadata or {}
+                    distance_metric_str = collection_metadata.get('hnsw:space', 'l2')
+                    if distance_metric_str == 'cosine':
+                        distance_metric = DistanceMetric.COSINE
+                    elif distance_metric_str == 'ip':
+                        distance_metric = DistanceMetric.IP
+                    else:
+                        distance_metric = DistanceMetric.L2
+
                     for i, doc_id in enumerate(search_results['ids'][0]):
                         distance = search_results['distances'][0][i] if search_results.get('distances') else 0.0
-                        similarity = 1 - distance
 
-                        # 相似度阈值过滤：使用用户设置的阈值
-                        # 注意：distance越小表示越相似，阈值越小要求越严格
-                        # 前端传递的是0-1的相似度，需要转换为distance阈值
-                        distance_threshold = 2.0 - (request.similarity_threshold * 2.0)  # 转换公式
-                        if distance < distance_threshold:
+                        # 使用优化的相似度计算
+                        similarity_percent = calculate_optimized_similarity(distance, distance_metric)
+
+                        # 相似度阈值过滤：将百分比阈值转换为0-1范围
+                        similarity_threshold_decimal = request.similarity_threshold
+                        similarity_decimal = similarity_percent / 100.0
+
+                        if similarity_decimal >= similarity_threshold_decimal:
                             result = QueryResult(
                                 id=doc_id,
                                 document=search_results['documents'][0][i] if search_results.get('documents') else "",
@@ -1140,14 +1333,30 @@ async def llm_query(request: LLMQueryRequest):
 
                 # 处理查询结果
                 if search_results['documents'] and search_results['documents'][0]:
+                    logger.info(f"集合 {collection_name} 返回了 {len(search_results['documents'][0])} 个结果")
+
+                    # 获取集合的距离度量类型
+                    collection_metadata = collection.metadata or {}
+                    distance_metric_str = collection_metadata.get('hnsw:space', 'l2')
+                    if distance_metric_str == 'cosine':
+                        distance_metric = DistanceMetric.COSINE
+                    elif distance_metric_str == 'ip':
+                        distance_metric = DistanceMetric.IP
+                    else:
+                        distance_metric = DistanceMetric.L2
+
                     for i in range(len(search_results['documents'][0])):
                         distance = search_results['distances'][0][i]
 
-                        # 相似度阈值过滤：使用用户设置的阈值
-                        # 注意：distance越小表示越相似，阈值越小要求越严格
-                        # 前端传递的是0-1的相似度，需要转换为distance阈值
-                        distance_threshold = 2.0 - (request.similarity_threshold * 2.0)  # 转换公式
-                        if distance < distance_threshold:
+                        # 使用优化的相似度计算
+                        similarity_percent = calculate_optimized_similarity(distance, distance_metric)
+
+                        # 相似度阈值过滤：将百分比阈值转换为0-1范围
+                        similarity_threshold_decimal = request.similarity_threshold
+                        similarity_decimal = similarity_percent / 100.0
+
+                        logger.info(f"文档 {i}: distance={distance:.4f}, similarity={similarity_percent:.1f}%, threshold={similarity_threshold_decimal:.2f}")
+                        if similarity_decimal >= similarity_threshold_decimal:
                             result_data = {
                                 'id': f"{collection_name}_{i}_{int(time.time() * 1000)}",
                                 'document': search_results['documents'][0][i],
@@ -1170,7 +1379,38 @@ async def llm_query(request: LLMQueryRequest):
         # 2. 调用LLM生成流式响应
         async def generate_stream():
             try:
-                llm_client = get_llm_client()
+                # 首先发送查询结果元数据
+                metadata_chunk = {
+                    'metadata': {
+                        'documents_found': len(final_results),
+                        'query_results': [
+                            {
+                                'id': result['id'],
+                                'document': result['document'][:200] + '...' if len(result['document']) > 200 else result['document'],
+                                'distance': result['distance'],
+                                'collection_name': result['collection_name'],
+                                'metadata': result['metadata']
+                            }
+                            for result in final_results
+                        ]
+                    }
+                }
+                data = json.dumps(metadata_chunk, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+
+                get_llm_client_func, init_llm_client_func = get_llm_client_module()
+                if get_llm_client_func is None:
+                    # 如果LLM客户端不可用，返回简单的搜索结果
+                    simple_response = {
+                        "type": "search_results",
+                        "results": final_results,
+                        "message": "找到相关文档，但AI回答功能暂时不可用"
+                    }
+                    data = json.dumps(simple_response, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
+                    return
+
+                llm_client = get_llm_client_func()
 
                 async for chunk in llm_client.query_with_context(
                     query_results=final_results,

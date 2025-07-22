@@ -49,7 +49,7 @@ interface QueryMessage {
 
 interface QueryResult {
   id: string;
-  content: string;
+  document: string;
   distance: number;
   metadata: Record<string, any>;
   collection_name?: string;
@@ -77,6 +77,7 @@ const QueryTab: React.FC = () => {
     n_results: 10,
   });
   const [siderCollapsed, setSiderCollapsed] = useState(false);
+  const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
   const [collections, setCollections] = useState<CollectionInfo[]>([]);
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
@@ -227,6 +228,7 @@ const QueryTab: React.FC = () => {
                         ? {
                             ...msg,
                             documents_found: data.metadata.documents_found,
+                            results: data.metadata.query_results || [],
                             content: `智能回答：（找到 ${data.metadata.documents_found} 个相关文档）`
                           }
                         : msg
@@ -314,6 +316,19 @@ const QueryTab: React.FC = () => {
   const handleCopyContent = (content: string) => {
     navigator.clipboard.writeText(content);
     message.success('内容已复制到剪贴板');
+  };
+
+  // 切换查询结果展开状态
+  const toggleResultExpansion = (resultId: string) => {
+    setExpandedResults(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(resultId)) {
+        newSet.delete(resultId);
+      } else {
+        newSet.add(resultId);
+      }
+      return newSet;
+    });
   };
 
   const siderContent = (
@@ -441,7 +456,11 @@ const QueryTab: React.FC = () => {
                 max={1}
                 step={0.1}
                 value={settings.similarity_threshold}
-                onChange={(value) => setSettings(prev => ({ ...prev, similarity_threshold: value }))}
+                onChange={(value) => {
+                  if (typeof value === 'number' && value !== settings.similarity_threshold) {
+                    setSettings(prev => ({ ...prev, similarity_threshold: value }));
+                  }
+                }}
                 tooltip={{ formatter: (value) => `相关性: ${(value! * 100).toFixed(0)}%` }}
                 marks={{
                   0: '宽松',
@@ -456,7 +475,12 @@ const QueryTab: React.FC = () => {
                 min={1}
                 max={100}
                 value={settings.n_results}
-                onChange={(value) => setSettings(prev => ({ ...prev, n_results: value || 10 }))}
+                onChange={(value) => {
+                  const newValue = value || 10;
+                  if (newValue !== settings.n_results) {
+                    setSettings(prev => ({ ...prev, n_results: newValue }));
+                  }
+                }}
                 style={{ width: '100%' }}
               />
             </Form.Item>
@@ -549,19 +573,29 @@ const QueryTab: React.FC = () => {
                       <Card
                         size="small"
                         style={{
-                          backgroundColor: message.type === 'user' ? 'var(--ant-color-primary)' : 'var(--ant-color-bg-container)',
-                          color: message.type === 'user' ? 'white' : 'var(--ant-color-text)',
-                          border: message.type === 'user' ? 'none' : '1px solid var(--ant-color-border)',
+                          background: message.type === 'user'
+                            ? '#ffffff'
+                            : 'var(--ant-color-bg-container)',
+                          color: message.type === 'user' ? '#000000' : 'var(--ant-color-text)',
+                          border: message.type === 'user' ? '2px solid #3b82f6' : '1px solid var(--ant-color-border)',
+                          boxShadow: message.type === 'user' ? '0 2px 8px rgba(59, 130, 246, 0.2)' : undefined
                         }}
                         bodyStyle={{
                           padding: '12px 16px',
                         }}
                       >
                         <div style={{
-                          color: message.type === 'user' ? 'white !important' : 'var(--ant-color-text)',
+                          color: message.type === 'user' ? '#000000' : 'var(--ant-color-text)',
                           lineHeight: '1.5',
+                          textShadow: 'none',
+                          fontWeight: message.type === 'user' ? '500' : 'normal'
                         }}>
-                          <span style={{ color: message.type === 'user' ? 'white' : 'inherit' }}>
+                          <span style={{
+                            color: message.type === 'user' ? '#000000 !important' : 'inherit',
+                            textShadow: 'none',
+                            fontSize: '14px',
+                            fontWeight: message.type === 'user' ? '500' : 'normal'
+                          }}>
                             {message.content}
                           </span>
                           {message.selected_collections && (
@@ -569,7 +603,7 @@ const QueryTab: React.FC = () => {
                               <Text
                                 style={{
                                   fontSize: '12px',
-                                  color: message.type === 'user' ? 'rgba(255, 255, 255, 0.9)' : 'var(--ant-color-text-secondary)',
+                                  color: message.type === 'user' ? '#666666' : 'var(--ant-color-text-secondary)',
                                   fontWeight: message.type === 'user' ? 'normal' : 'normal'
                                 }}
                               >
@@ -605,7 +639,7 @@ const QueryTab: React.FC = () => {
                           marginTop: 8,
                           fontSize: '12px',
                           opacity: 0.8,
-                          color: message.type === 'user' ? 'white' : 'var(--ant-color-text-secondary)',
+                          color: message.type === 'user' ? '#666666' : 'var(--ant-color-text-secondary)',
                         }}>
                           {message.timestamp}
                           {message.is_streaming && (
@@ -635,33 +669,50 @@ const QueryTab: React.FC = () => {
                                   style={{ width: '100%' }}
                                   title={
                                     <Space>
-                                      <Text strong>相似度: {(result.distance * 100).toFixed(1)}%</Text>
+                                      <span style={{
+                                        backgroundColor: '#e6f7ff',
+                                        color: '#0050b3',
+                                        padding: '4px 12px',
+                                        borderRadius: '16px',
+                                        fontSize: '13px',
+                                        fontWeight: '600'
+                                      }}>
+                                        相似度: {(Math.max(0, Math.min(100, (1 / (1 + result.distance)) * 100))).toFixed(1)}%
+                                      </span>
                                       <Tag color="blue">
-                                        {result.metadata.source}
+                                        {result.metadata.source || result.collection_name}
                                       </Tag>
                                     </Space>
                                   }
                                   extra={
                                     <Space>
-                                      <Button 
-                                        size="small" 
+                                      <Button
+                                        size="small"
                                         icon={<EyeOutlined />}
                                         type="text"
+                                        onClick={() => toggleResultExpansion(result.id)}
                                       >
-                                        查看
+                                        {expandedResults.has(result.id) ? '收起' : '查看'}
                                       </Button>
                                       <Button 
                                         size="small" 
                                         icon={<CopyOutlined />}
                                         type="text"
-                                        onClick={() => handleCopyContent(result.content)}
+                                        onClick={() => handleCopyContent(result.document)}
                                       >
                                         复制
                                       </Button>
                                     </Space>
                                   }
                                 >
-                                  <Text>{result.content}</Text>
+                                  <Text>
+                                    {expandedResults.has(result.id)
+                                      ? result.document
+                                      : result.document.length > 200
+                                        ? result.document.substring(0, 200) + '...'
+                                        : result.document
+                                    }
+                                  </Text>
                                 </Card>
                               </List.Item>
                             )}
@@ -714,6 +765,10 @@ const QueryTab: React.FC = () => {
               size="large"
               loading={loading}
               disabled={loading || selectedCollections.length === 0}
+              style={{
+                color: '#1f2937',
+                backgroundColor: '#ffffff'
+              }}
             />
 
             {selectedCollections.length > 0 && (

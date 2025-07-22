@@ -42,6 +42,16 @@ import {
 import axios from 'axios';
 import { api, API_BASE_URL } from '../config/api';
 import ThemeToggle from './ThemeToggle';
+import {
+  isSupportedFile,
+  getFileFormatInfo,
+  isTableFile,
+  formatFileSize,
+  validateFileSize,
+  getUploadHint,
+  generateAcceptString
+} from '../utils/fileUtils';
+import { showError, getDetailedErrorMessage } from '../utils/errorHandler';
 
 const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -162,19 +172,36 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
 
   // 处理文件选择
   const handleFileSelect = (file: File) => {
-    // 检查文件类型
-    if (!file.name.toLowerCase().endsWith('.txt')) {
-      message.error('只支持上传 .txt 格式的文件');
+    // 检查文件格式
+    if (!isSupportedFile(file.name)) {
+      message.error('不支持的文件格式，请选择支持的文档格式');
       return false;
     }
 
-    // 检查文件大小 (限制为10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      message.error('文件大小不能超过 10MB');
+    // 检查文件大小 (50MB限制)
+    if (!validateFileSize(file, 50)) {
+      message.error('文件大小不能超过 50MB');
       return false;
     }
+
+    const formatInfo = getFileFormatInfo(file.name);
+    const uploadHint = getUploadHint(file.name);
 
     setSelectedFile(file);
+
+    // 显示文件信息和处理提示
+    message.success(
+      <div>
+        <div>已选择文件: {file.name}</div>
+        <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+          {formatInfo?.description} ({formatFileSize(file.size)})
+        </div>
+        <div style={{ fontSize: '12px', color: '#1890ff', marginTop: '2px' }}>
+          {uploadHint}
+        </div>
+      </div>
+    );
+
     return false; // 阻止自动上传
   };
 
@@ -351,22 +378,28 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
         clearInterval(progressInterval);
         console.error('API调用失败:', apiError);
 
+        const errorDetail = apiError.response?.data?.detail || '文档上传失败';
         setUploadProgress({
           percent: 0,
           status: 'error',
-          message: apiError.response?.data?.detail || '文档上传失败'
+          message: errorDetail
         });
-        message.error('文档上传失败');
+
+        // 使用增强的错误处理
+        showError(apiError);
       }
 
     } catch (error: any) {
       console.error('文档上传失败:', error);
+      const errorDetail = error.response?.data?.detail || '文档上传失败';
       setUploadProgress({
         percent: 0,
         status: 'error',
-        message: error.response?.data?.detail || '文档上传失败'
+        message: errorDetail
       });
-      message.error('文档上传失败');
+
+      // 使用增强的错误处理
+      showError(error);
     }
   };
 
@@ -949,7 +982,7 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
               multiple={false}
               beforeUpload={handleFileSelect}
               showUploadList={false}
-              accept=".txt"
+              accept={generateAcceptString()}
             >
               <p className="ant-upload-drag-icon">
                 <InboxOutlined />
@@ -958,7 +991,9 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                 点击或拖拽文件到此区域上传
               </p>
               <p className="ant-upload-hint">
-                支持 .txt 格式文件，文件大小不超过 10MB
+                支持多种文档格式：文本(.txt)、PDF(.pdf)、Word(.docx/.doc)、PowerPoint(.pptx/.ppt)、Markdown(.md)、RTF(.rtf)、Excel(.xlsx/.xls)、CSV(.csv)
+                <br />
+                文件大小不超过 50MB
               </p>
             </Upload.Dragger>
 

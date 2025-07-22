@@ -687,10 +687,13 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                 handleQuery();
               }
             }}
-            style={{ 
+            style={{
               borderRadius: '12px',
               fontSize: '14px',
-              lineHeight: '1.5'
+              lineHeight: '1.5',
+              color: '#1f2937',
+              backgroundColor: '#ffffff',
+              border: '1px solid #d1d5db'
             }}
           />
           <div style={{ marginTop: '8px', textAlign: 'right' }}>
@@ -815,13 +818,18 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                               padding: '12px 16px',
                               borderRadius: message.type === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
                               background: message.type === 'user'
-                                ? '#3b82f6'
+                                ? '#ffffff'
                                 : '#ffffff',
-                              color: message.type === 'user' ? '#fff' : '#1f2937',
-                              border: message.type === 'user' ? 'none' : '1px solid #e5e7eb',
-                              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+                              color: message.type === 'user' ? '#000000' : '#1f2937',
+                              border: message.type === 'user' ? '2px solid #3b82f6' : '1px solid #e5e7eb',
+                              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+                              fontWeight: message.type === 'user' ? '500' : 'normal'
                             }}>
-                              <div>{message.content}</div>
+                              <div style={{
+                                color: message.type === 'user' ? '#000000' : '#1f2937',
+                                textShadow: 'none',
+                                fontWeight: message.type === 'user' ? '500' : 'normal'
+                              }}>{message.content}</div>
                               {message.selected_collections && (
                                 <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.8 }}>
                                   查询集合: {message.selected_collections.join(', ')}
@@ -833,14 +841,14 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                 <div style={{
                                   marginTop: '12px',
                                   padding: '12px',
-                                  backgroundColor: message.type === 'user' ? 'rgba(255,255,255,0.1)' : '#fff',
+                                  backgroundColor: message.type === 'user' ? '#ffffff' : '#fff',
                                   borderRadius: '8px',
-                                  border: message.type === 'user' ? '1px solid rgba(255,255,255,0.2)' : '1px solid #e8e8e8'
+                                  border: message.type === 'user' ? '1px solid #e5e7eb' : '1px solid #e8e8e8'
                                 }}>
                                   <div style={{
                                     whiteSpace: 'pre-wrap',
                                     lineHeight: '1.6',
-                                    color: message.type === 'user' ? '#fff' : '#000'
+                                    color: message.type === 'user' ? '#1f2937' : '#000'
                                   }}>
                                     {message.llm_response}
                                     {message.is_streaming && (
@@ -865,7 +873,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                   <Button
                                     type="link"
                                     size="small"
-                                    style={{ padding: '0', height: 'auto', color: message.type === 'user' ? '#fff' : '#1890ff' }}
+                                    style={{ padding: '0', height: 'auto', color: message.type === 'user' ? '#3b82f6' : '#1890ff' }}
                                     onClick={() => {
                                       const referenceKey = `reference_${message.id}`;
                                       setExpandedResults(prev => {
@@ -887,7 +895,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                       marginTop: '8px',
                                       maxHeight: '300px',
                                       overflowY: 'auto',
-                                      border: message.type === 'user' ? '1px solid rgba(255,255,255,0.3)' : '1px solid #e8e8e8',
+                                      border: message.type === 'user' ? '1px solid #d1d5db' : '1px solid #e8e8e8',
                                       borderRadius: '6px',
                                       padding: '8px'
                                     }}>
@@ -895,18 +903,34 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                         <div key={result.id} style={{
                                           marginBottom: index < message.query_results!.length - 1 ? '8px' : '0',
                                           paddingBottom: index < message.query_results!.length - 1 ? '8px' : '0',
-                                          borderBottom: index < message.query_results!.length - 1 ? `1px solid ${message.type === 'user' ? 'rgba(255,255,255,0.2)' : '#f0f0f0'}` : 'none'
+                                          borderBottom: index < message.query_results!.length - 1 ? `1px solid ${message.type === 'user' ? '#e5e7eb' : '#f0f0f0'}` : 'none'
                                         }}>
                                           <div style={{
                                             fontSize: '12px',
-                                            color: message.type === 'user' ? 'rgba(255,255,255,0.8)' : '#666',
-                                            marginBottom: '4px'
+                                            color: message.type === 'user' ? '#374151' : '#666',
+                                            marginBottom: '4px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px'
                                           }}>
-                                            #{index + 1} • 相似度: {((1 - result.distance) * 100).toFixed(1)}% • {result.collection_name}
+                                            <span style={{ fontWeight: '600' }}>#{index + 1}</span>
+                                            <span style={{
+                                              backgroundColor: '#e6f7ff',
+                                              color: '#0369a1',
+                                              padding: '2px 6px',
+                                              borderRadius: '4px',
+                                              fontSize: '11px',
+                                              fontWeight: '600'
+                                            }}>
+                                              相似度: {(Math.max(0, Math.min(100, (1 / (1 + result.distance)) * 100))).toFixed(1)}%
+                                            </span>
+                                            <span style={{ color: message.type === 'user' ? '#6b7280' : '#999' }}>
+                                              {result.collection_name}
+                                            </span>
                                           </div>
                                           <div style={{
                                             fontSize: '13px',
-                                            color: message.type === 'user' ? 'rgba(255,255,255,0.9)' : '#333',
+                                            color: message.type === 'user' ? '#374151' : '#333',
                                             lineHeight: '1.4'
                                           }}>
                                             {result.document.length > 150
@@ -917,7 +941,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                           {result.metadata.file_name && (
                                             <div style={{
                                               fontSize: '11px',
-                                              color: message.type === 'user' ? 'rgba(255,255,255,0.7)' : '#999',
+                                              color: message.type === 'user' ? '#6b7280' : '#999',
                                               marginTop: '2px'
                                             }}>
                                               📄 {result.metadata.file_name}
@@ -952,11 +976,20 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                       <List.Item.Meta
                                         title={
                                           <Space>
-                                            <Text strong>#{index + 1}</Text>
-                                            <Text type="secondary">
-                                              相似度: {((1 - result.distance) * 100).toFixed(1)}%
+                                            <Text strong style={{ color: '#1890ff' }}>#{index + 1}</Text>
+                                            <span style={{
+                                              backgroundColor: '#e6f7ff',
+                                              color: '#0050b3',
+                                              padding: '2px 8px',
+                                              borderRadius: '12px',
+                                              fontSize: '12px',
+                                              fontWeight: '600'
+                                            }}>
+                                              相似度: {(Math.max(0, Math.min(100, (1 / (1 + result.distance)) * 100))).toFixed(1)}%
+                                            </span>
+                                            <Text type="secondary" style={{ fontSize: '12px' }}>
+                                              集合: {result.collection_name}
                                             </Text>
-                                            <Text type="secondary">集合: {result.collection_name}</Text>
                                           </Space>
                                         }
                                         description={

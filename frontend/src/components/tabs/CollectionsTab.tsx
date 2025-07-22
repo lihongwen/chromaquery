@@ -39,6 +39,7 @@ import {
 } from '@ant-design/icons';
 import { useResponsive } from '../../hooks/useResponsive';
 import { api, API_BASE_URL } from '../../config/api';
+import { generateAcceptString } from '../../utils/fileUtils';
 import CollectionDetail from '../CollectionDetail';
 
 const { Sider, Content } = Layout;
@@ -933,7 +934,7 @@ const CollectionsTab: React.FC = () => {
             <Upload.Dragger
               name="file"
               multiple={false}
-              accept=".txt,.pdf,.doc,.docx"
+              accept={generateAcceptString()}
               beforeUpload={() => false}
             >
               <p className="ant-upload-drag-icon">
@@ -941,7 +942,9 @@ const CollectionsTab: React.FC = () => {
               </p>
               <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
               <p className="ant-upload-hint">
-                支持 .txt, .pdf, .doc, .docx 格式文件
+                支持多种文档格式：文本、PDF、Word、PowerPoint、Markdown、RTF、Excel、CSV
+                <br />
+                文件大小不超过 50MB
               </p>
             </Upload.Dragger>
           </Form.Item>
