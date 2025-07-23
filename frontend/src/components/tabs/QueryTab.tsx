@@ -17,7 +17,8 @@ import {
   message,
   Spin,
   Empty,
-  Select
+  Select,
+  Tooltip
 } from 'antd';
 import {
   SendOutlined,
@@ -377,9 +378,65 @@ const QueryTab: React.FC = () => {
     });
   };
 
-  const siderContent = (
+  // 折叠状态下的侧边栏内容
+  const collapsedSiderContent = (
+    <div style={{
+      padding: '16px 0',
+      textAlign: 'center',
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'flex-start'
+    }}>
+      <div style={{ flex: 1 }}>
+        <Space direction="vertical" size="small" style={{ width: '100%' }}>
+          <Tooltip title="集合选择" placement="right">
+            <div style={{
+              fontSize: '18px',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >📚</div>
+          </Tooltip>
+          
+          <Tooltip title="查询历史" placement="right">
+            <div style={{
+              fontSize: '18px',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >📝</div>
+          </Tooltip>
+
+          <Tooltip title="查询设置" placement="right">
+            <div style={{
+              fontSize: '18px',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >⚙️</div>
+          </Tooltip>
+        </Space>
+      </div>
+    </div>
+  );
+
+  // 展开状态下的侧边栏内容
+  const expandedSiderContent = (
     <div style={{ padding: 16 }}>
-      <Collapse defaultActiveKey={['collections', 'settings']}>
+      <Collapse defaultActiveKey={['collections', 'history', 'settings']}>
         <Panel header="📚 集合选择" key="collections">
           <Form layout="vertical" size="small">
             <Form.Item label="选择查询集合">
@@ -535,6 +592,9 @@ const QueryTab: React.FC = () => {
       </Collapse>
     </div>
   );
+
+  // 根据折叠状态选择内容
+  const siderContent = siderCollapsed ? collapsedSiderContent : expandedSiderContent;
 
   return (
     <Layout style={{ height: 'calc(100vh - 120px)', minHeight: '500px' }}>

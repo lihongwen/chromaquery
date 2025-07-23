@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Layout, Card, List, Input, Button, Select, Space, Typography, message, Empty, Result, Drawer, FloatButton } from 'antd';
+import { Layout, Card, List, Input, Button, Select, Space, Typography, message, Empty, Result, Drawer, FloatButton, Collapse, Tooltip } from 'antd';
 import { SearchOutlined, SendOutlined, MessageOutlined, DatabaseOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined, MenuOutlined, SettingOutlined, EyeOutlined, EyeInvisibleOutlined, CopyOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import ThemeToggle from './ThemeToggle';
 import { useResponsive } from '../hooks/useResponsive';
 import { api, API_BASE_URL } from '../config/api';
@@ -8,6 +9,7 @@ import { api, API_BASE_URL } from '../config/api';
 const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
 const { TextArea } = Input;
+const { Panel } = Collapse;
 
 // 接口定义
 interface CollectionInfo {
@@ -53,6 +55,7 @@ interface QueryPageProps {
 
 const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToCollections }) => {
   const responsive = useResponsive();
+  const navigate = useNavigate();
 
   // 响应式状态管理
   const [leftDrawerVisible, setLeftDrawerVisible] = useState(false);
@@ -551,117 +554,218 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
     );
   }
 
-  // 渲染对话历史内容 - 提取为独立组件以便复用，并使用useMemo优化
-  const renderConversationHistory = useMemo(() => (
-    <div style={{ padding: responsive.isMobile ? '16px' : '24px' }}>
-      <Space direction="vertical" style={{ width: '100%' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Title level={4} style={{ margin: 0 }}>
-            <MessageOutlined style={{ marginRight: 8, color: '#3b82f6' }} />
-            <span style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              对话历史
-            </span>
-          </Title>
-          <Space>
+  // 折叠状态下的左侧栏内容
+  const collapsedLeftSiderContent = useMemo(() => (
+    <div style={{
+      padding: '16px 0',
+      textAlign: 'center',
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'flex-start'
+    }}>
+      <div style={{ flex: 1 }}>
+        <Space direction="vertical" size="small" style={{ width: '100%' }}>
+          <Tooltip title="对话历史" placement="right">
+            <div style={{
+              fontSize: '18px',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >💬</div>
+          </Tooltip>
+          
+          <Tooltip title="快捷操作" placement="right">
+            <div style={{
+              fontSize: '18px',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            onClick={createNewConversation}
+            >⚡</div>
+          </Tooltip>
+        </Space>
+      </div>
+    </div>
+  ), [createNewConversation]);
+
+  // 展开状态下的左侧栏内容 - 提取为独立组件以便复用，并使用useMemo优化
+  const expandedLeftSiderContent = useMemo(() => (
+    <div style={{ padding: 16 }}>
+      <Collapse defaultActiveKey={['conversations', 'actions']}>
+        <Panel header="💬 对话历史" key="conversations">
+          <List
+            size="small"
+            dataSource={conversations}
+            renderItem={(conversation) => (
+              <List.Item
+                style={{
+                  cursor: 'pointer',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  backgroundColor: currentConversation?.id === conversation.id
+                    ? '#f3f4f6'
+                    : 'transparent',
+                  border: currentConversation?.id === conversation.id
+                    ? '1px solid #e5e7eb'
+                    : '1px solid transparent',
+                  marginBottom: '4px',
+                  transition: 'background-color 0.2s ease',
+                }}
+                onClick={() => {
+                  setCurrentConversation(conversation);
+                  if (responsive.isMobile) {
+                    setLeftDrawerVisible(false);
+                  }
+                }}
+                onMouseEnter={(e) => {
+                  if (currentConversation?.id !== conversation.id) {
+                    e.currentTarget.style.backgroundColor = '#f9fafb';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (currentConversation?.id !== conversation.id) {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }
+                }}
+              >
+                <List.Item.Meta
+                  title={
+                    <Text
+                      ellipsis
+                      style={{
+                        fontSize: '13px',
+                        fontWeight: currentConversation?.id === conversation.id ? 600 : 500,
+                        color: currentConversation?.id === conversation.id ? '#1d4ed8' : 'var(--ant-color-text)'
+                      }}
+                    >
+                      {conversation.title}
+                    </Text>
+                  }
+                  description={
+                    <Text type="secondary" style={{ fontSize: '11px' }}>
+                      {new Date(conversation.created_at).toLocaleString()}
+                    </Text>
+                  }
+                />
+              </List.Item>
+            )}
+            locale={{
+              emptyText: (
+                <div style={{ textAlign: 'center', padding: '16px' }}>
+                  <MessageOutlined style={{ fontSize: '20px', color: '#d9d9d9', marginBottom: '8px' }} />
+                  <div style={{ color: '#999', fontSize: '12px' }}>暂无对话历史</div>
+                  <div style={{ color: '#ccc', fontSize: '11px' }}>点击"新对话"开始查询</div>
+                </div>
+              )
+            }}
+          />
+        </Panel>
+
+        <Panel header="⚡ 快捷操作" key="actions">
+          <Space direction="vertical" style={{ width: '100%' }}>
             <Button
-              type="text"
+              type="primary"
               size="small"
-              icon={<DeleteOutlined />}
-              onClick={clearConversations}
-              disabled={conversations.length === 0}
-              title="清空对话历史"
-              style={{ 
-                borderRadius: '8px',
-                opacity: conversations.length === 0 ? 0.5 : 1
-              }}
-            />
-            <Button 
-              type="primary" 
-              size="small" 
+              icon={<PlusOutlined />}
+              block
               onClick={createNewConversation}
-              style={{ 
-                borderRadius: '8px',
-                height: '32px',
-                padding: '0 16px'
+              style={{
+                borderRadius: '6px',
+                height: '32px'
               }}
             >
               新对话
             </Button>
-          </Space>
-        </div>
-        
-        <List
-          size="small"
-          dataSource={conversations}
-          renderItem={(conversation) => (
-            <List.Item
+            <Button
+              size="small"
+              icon={<DeleteOutlined />}
+              block
+              onClick={clearConversations}
+              disabled={conversations.length === 0}
               style={{
-                cursor: 'pointer',
-                padding: '12px 16px',
                 borderRadius: '6px',
-                backgroundColor: currentConversation?.id === conversation.id
-                  ? '#f3f4f6'
-                  : 'transparent',
-                border: currentConversation?.id === conversation.id
-                  ? '1px solid #e5e7eb'
-                  : '1px solid transparent',
-                marginBottom: '8px',
-                transition: 'background-color 0.2s ease',
-              }}
-              onClick={() => {
-                setCurrentConversation(conversation);
-                if (responsive.isMobile) {
-                  setLeftDrawerVisible(false);
-                }
-              }}
-              onMouseEnter={(e) => {
-                if (currentConversation?.id !== conversation.id) {
-                  e.currentTarget.style.backgroundColor = '#f9fafb';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (currentConversation?.id !== conversation.id) {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }
+                height: '32px',
+                opacity: conversations.length === 0 ? 0.5 : 1
               }}
             >
-              <List.Item.Meta
-                title={
-                  <Text
-                    ellipsis
-                    style={{
-                      fontSize: '14px',
-                      fontWeight: currentConversation?.id === conversation.id ? 600 : 500,
-                      color: currentConversation?.id === conversation.id ? '#1d4ed8' : 'var(--ant-color-text)'
-                    }}
-                  >
-                    {conversation.title}
-                  </Text>
-                }
-                description={
-                  <Text type="secondary" style={{ fontSize: '12px' }}>
-                    {new Date(conversation.created_at).toLocaleString()}
-                  </Text>
-                }
-              />
-            </List.Item>
-          )}
-          locale={{
-            emptyText: (
-              <div style={{ textAlign: 'center', padding: '20px' }}>
-                <MessageOutlined style={{ fontSize: '24px', color: '#d9d9d9', marginBottom: '8px' }} />
-                <div style={{ color: '#999' }}>暂无对话历史</div>
-                <div style={{ color: '#ccc', fontSize: '12px' }}>点击"新对话"开始查询</div>
-              </div>
-            )
-          }}
-        />
-      </Space>
+              清空历史
+            </Button>
+          </Space>
+        </Panel>
+      </Collapse>
     </div>
   ), [responsive.isMobile, conversations, currentConversation, clearConversations, createNewConversation]);
 
-  // 渲染查询输入区域 - 提取为独立组件以便复用，并使用useMemo优化
-  const renderQueryInput = useMemo(() => (
+  // 左侧栏内容
+  const leftSiderContent = leftCollapsed ? collapsedLeftSiderContent : expandedLeftSiderContent;
+
+  // 折叠状态下的右侧栏内容
+  const collapsedRightSiderContent = useMemo(() => (
+    <div style={{
+      padding: '16px 0',
+      textAlign: 'center',
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'flex-start'
+    }}>
+      <div style={{ flex: 1 }}>
+        <Space direction="vertical" size="small" style={{ width: '100%' }}>
+          <Tooltip title="选择集合" placement="left">
+            <div style={{
+              fontSize: '18px',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >📚</div>
+          </Tooltip>
+          
+          <Tooltip title="查询内容" placement="left">
+            <div style={{
+              fontSize: '18px',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >🔍</div>
+          </Tooltip>
+
+          <Tooltip title="发送查询" placement="left">
+            <div style={{
+              fontSize: '18px',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            onClick={handleQuery}
+            >📤</div>
+          </Tooltip>
+        </Space>
+      </div>
+    </div>
+  ), [handleQuery]);
+
+  // 展开状态下的右侧栏内容 - 提取为独立组件以便复用，并使用useMemo优化
+  const expandedRightSiderContent = useMemo(() => (
     <div style={{ padding: responsive.isMobile ? '16px' : '24px' }}>
       <Space direction="vertical" style={{ width: '100%' }} size="large">
         <div>
@@ -679,7 +783,6 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
             onChange={setSelectedCollections}
             loading={collectionsLoading}
             maxTagCount="responsive"
-
           >
             {collections.map(collection => (
               <Select.Option key={collection.display_name} value={collection.display_name}>
@@ -751,22 +854,27 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
     </div>
   ), [responsive.isMobile, collections, selectedCollections, collectionsLoading, queryText, loading, handleQuery]);
 
+  // 右侧栏内容
+  const rightSiderContent = rightCollapsed ? collapsedRightSiderContent : expandedRightSiderContent;
+
   return (
     <Layout style={{ height: '100vh' }}>
       {/* 桌面端左侧对话历史 */}
       {!responsive.isMobile && (
-        <Sider 
-          width={leftCollapsed ? 0 : 320}
+        <Sider
+          width={320}
+          theme="light"
           collapsible
           collapsed={leftCollapsed}
-          trigger={null}
+          onCollapse={setLeftCollapsed}
           style={{
-            background: '#ffffff',
-            borderRight: '1px solid #e5e7eb',
-            boxShadow: '1px 0 3px rgba(0, 0, 0, 0.1)'
+            backgroundColor: 'var(--ant-color-bg-container)',
+            borderRight: '1px solid var(--ant-color-border)',
+            height: '100%',
+            overflow: 'auto',
           }}
         >
-          {!leftCollapsed && renderConversationHistory}
+          {leftSiderContent}
         </Sider>
       )}
 
@@ -1157,18 +1265,20 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
 
       {/* 桌面端右侧查询输入区域 */}
       {!responsive.isMobile && (
-        <Sider 
-          width={rightCollapsed ? 0 : 380}
+        <Sider
+          width={380}
+          theme="light"
           collapsible
           collapsed={rightCollapsed}
-          trigger={null}
+          onCollapse={setRightCollapsed}
           style={{
-            background: '#ffffff',
-            borderLeft: '1px solid #e5e7eb',
-            boxShadow: '-1px 0 3px rgba(0, 0, 0, 0.1)'
+            backgroundColor: 'var(--ant-color-bg-container)',
+            borderLeft: '1px solid var(--ant-color-border)',
+            height: '100%',
+            overflow: 'auto',
           }}
         >
-          {!rightCollapsed && renderQueryInput}
+          {rightSiderContent}
         </Sider>
       )}
 
@@ -1181,7 +1291,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
         width={responsive.screenWidth > 400 ? 320 : '85%'}
         bodyStyle={{ padding: 0 }}
       >
-        {renderConversationHistory}
+        {expandedLeftSiderContent}
       </Drawer>
 
       {/* 移动端抽屉 - 查询输入 */}
@@ -1193,7 +1303,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
         width={responsive.screenWidth > 400 ? 360 : '90%'}
         bodyStyle={{ padding: 0 }}
       >
-        {renderQueryInput}
+        {expandedRightSiderContent}
       </Drawer>
 
       {/* 移动端悬浮按钮组 */}
@@ -1228,23 +1338,6 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
         </>
       )}
 
-      {/* 桌面端侧边栏展开/收起按钮 */}
-      {!responsive.isMobile && (
-        <>
-          <FloatButton
-            icon={<MenuOutlined />}
-            style={{ left: leftCollapsed ? 16 : 340, top: 100 }}
-            onClick={() => setLeftCollapsed(!leftCollapsed)}
-            tooltip={leftCollapsed ? "展开对话历史" : "收起对话历史"}
-          />
-          <FloatButton
-            icon={<SettingOutlined />}
-            style={{ right: rightCollapsed ? 16 : 400, top: 100 }}
-            onClick={() => setRightCollapsed(!rightCollapsed)}
-            tooltip={rightCollapsed ? "展开查询设置" : "收起查询设置"}
-          />
-        </>
-      )}
       </Layout>
     </Layout>
   );
