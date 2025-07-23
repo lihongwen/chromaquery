@@ -77,6 +77,15 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
           0%, 50% { opacity: 1; }
           51%, 100% { opacity: 0.3; }
         }
+        /* 强制设置对话框文字颜色 */
+        .ant-list-item div[style*="color"] {
+          color: #1f2937 !important;
+          -webkit-text-fill-color: #1f2937 !important;
+        }
+        .ant-card-body div {
+          color: #1f2937 !important;
+          -webkit-text-fill-color: #1f2937 !important;
+        }
       `;
       document.head.appendChild(style);
     }
@@ -817,63 +826,65 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                               maxWidth: '75%',
                               padding: '12px 16px',
                               borderRadius: message.type === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
-                              background: message.type === 'user'
-                                ? '#ffffff'
-                                : '#ffffff',
-                              color: message.type === 'user' ? '#000000' : '#1f2937',
-                              border: message.type === 'user' ? '2px solid #3b82f6' : '1px solid #e5e7eb',
+                              background: '#ffffff',
+                              color: '#1f2937',
+                              border: '1px solid #e5e7eb',
                               boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
-                              fontWeight: message.type === 'user' ? '500' : 'normal'
+                              fontWeight: 'normal'
                             }}>
-                              <div style={{
-                                color: message.type === 'user' ? '#000000' : '#1f2937',
-                                textShadow: 'none',
-                                fontWeight: message.type === 'user' ? '500' : 'normal'
-                              }}>{message.content}</div>
-                              {message.selected_collections && (
-                                <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.8 }}>
-                                  查询集合: {message.selected_collections.join(', ')}
-                                </div>
-                              )}
-
-                              {/* LLM回答显示 */}
-                              {message.llm_response && (
-                                <div style={{
-                                  marginTop: '12px',
-                                  padding: '12px',
-                                  backgroundColor: message.type === 'user' ? '#ffffff' : '#fff',
-                                  borderRadius: '8px',
-                                  border: message.type === 'user' ? '1px solid #e5e7eb' : '1px solid #e8e8e8'
-                                }}>
+                              {/* 用户查询内容或AI回答内容 */}
+                              {message.type === 'user' ? (
+                                <>
                                   <div style={{
+                                    color: '#1f2937 !important',
+                                    textShadow: 'none',
+                                    fontWeight: 'normal',
                                     whiteSpace: 'pre-wrap',
                                     lineHeight: '1.6',
-                                    color: message.type === 'user' ? '#1f2937' : '#000'
+                                    WebkitTextFillColor: '#1f2937',
+                                    opacity: 1
+                                  }}>{message.content}</div>
+                                  {message.selected_collections && (
+                                    <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.8 }}>
+                                      查询集合: {message.selected_collections.join(', ')}
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  <div style={{
+                                    color: '#1f2937 !important',
+                                    textShadow: 'none',
+                                    fontWeight: 'normal',
+                                    whiteSpace: 'pre-wrap',
+                                    lineHeight: '1.6',
+                                    WebkitTextFillColor: '#1f2937',
+                                    opacity: 1
                                   }}>
-                                    {message.llm_response}
+                                    {message.llm_response || message.content}
                                     {message.is_streaming && (
-                                      <span 
+                                      <span
                                         style={{
                                           display: 'inline-block',
                                           width: '8px',
                                           height: '20px',
-                                          backgroundColor: message.type === 'user' ? '#fff' : '#1890ff',
+                                          backgroundColor: '#1890ff',
                                           marginLeft: '2px'
                                         }}
                                         className="typing-cursor"
                                       />
                                     )}
                                   </div>
-                                </div>
+                                </>
                               )}
 
-                              {/* 参考资料展示 - 当有LLM回答时作为可展开的参考资料 */}
-                              {message.llm_response && message.query_results && message.query_results.length > 0 && (
+                              {/* 参考资料展示 - 只在AI回答消息中显示 */}
+                              {message.type === 'assistant' && message.query_results && message.query_results.length > 0 && (
                                 <div style={{ marginTop: '8px' }}>
                                   <Button
                                     type="link"
                                     size="small"
-                                    style={{ padding: '0', height: 'auto', color: message.type === 'user' ? '#3b82f6' : '#1890ff' }}
+                                    style={{ padding: '0', height: 'auto', color: '#1890ff' }}
                                     onClick={() => {
                                       const referenceKey = `reference_${message.id}`;
                                       setExpandedResults(prev => {
@@ -895,7 +906,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                       marginTop: '8px',
                                       maxHeight: '300px',
                                       overflowY: 'auto',
-                                      border: message.type === 'user' ? '1px solid #d1d5db' : '1px solid #e8e8e8',
+                                      border: '1px solid #e8e8e8',
                                       borderRadius: '6px',
                                       padding: '8px'
                                     }}>
@@ -903,11 +914,11 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                         <div key={result.id} style={{
                                           marginBottom: index < message.query_results!.length - 1 ? '8px' : '0',
                                           paddingBottom: index < message.query_results!.length - 1 ? '8px' : '0',
-                                          borderBottom: index < message.query_results!.length - 1 ? `1px solid ${message.type === 'user' ? '#e5e7eb' : '#f0f0f0'}` : 'none'
+                                          borderBottom: index < message.query_results!.length - 1 ? '1px solid #f0f0f0' : 'none'
                                         }}>
                                           <div style={{
                                             fontSize: '12px',
-                                            color: message.type === 'user' ? '#374151' : '#666',
+                                            color: '#666',
                                             marginBottom: '4px',
                                             display: 'flex',
                                             alignItems: 'center',
@@ -924,13 +935,13 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                             }}>
                                               相似度: {(Math.max(0, Math.min(100, (1 / (1 + result.distance)) * 100))).toFixed(1)}%
                                             </span>
-                                            <span style={{ color: message.type === 'user' ? '#6b7280' : '#999' }}>
+                                            <span style={{ color: '#999' }}>
                                               {result.collection_name}
                                             </span>
                                           </div>
                                           <div style={{
                                             fontSize: '13px',
-                                            color: message.type === 'user' ? '#374151' : '#333',
+                                            color: '#333',
                                             lineHeight: '1.4'
                                           }}>
                                             {result.document.length > 150
@@ -941,7 +952,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                           {result.metadata.file_name && (
                                             <div style={{
                                               fontSize: '11px',
-                                              color: message.type === 'user' ? '#6b7280' : '#999',
+                                              color: '#999',
                                               marginTop: '2px'
                                             }}>
                                               📄 {result.metadata.file_name}

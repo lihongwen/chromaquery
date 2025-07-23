@@ -35,6 +35,37 @@ const { Sider, Content } = Layout;
 const { Panel } = Collapse;
 const { Text } = Typography;
 
+// 添加CSS样式来强制设置用户查询文字颜色
+const userQueryTextStyle = `
+  .user-query-text {
+    color: #1f2937 !important;
+    font-size: 14px !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    -webkit-text-fill-color: #1f2937 !important;
+    text-shadow: none !important;
+  }
+  .user-query-text * {
+    color: #1f2937 !important;
+    -webkit-text-fill-color: #1f2937 !important;
+  }
+  .message.user div, .message.assistant div {
+    color: #1f2937 !important;
+    -webkit-text-fill-color: #1f2937 !important;
+  }
+`;
+
+// 将样式注入到页面中
+if (typeof document !== 'undefined') {
+  const existingStyle = document.getElementById('user-query-text-style');
+  if (!existingStyle) {
+    const styleElement = document.createElement('style');
+    styleElement.id = 'user-query-text-style';
+    styleElement.textContent = userQueryTextStyle;
+    document.head.appendChild(styleElement);
+  }
+}
+
 interface QueryMessage {
   id: string;
   type: 'user' | 'assistant';
@@ -573,73 +604,71 @@ const QueryTab: React.FC = () => {
                       <Card
                         size="small"
                         style={{
-                          background: message.type === 'user'
-                            ? '#ffffff'
-                            : 'var(--ant-color-bg-container)',
-                          color: message.type === 'user' ? '#000000' : 'var(--ant-color-text)',
-                          border: message.type === 'user' ? '2px solid #3b82f6' : '1px solid var(--ant-color-border)',
-                          boxShadow: message.type === 'user' ? '0 2px 8px rgba(59, 130, 246, 0.2)' : undefined
+                          background: '#ffffff',
+                          color: '#1f2937',
+                          border: '1px solid #e5e7eb',
+                          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
                         }}
                         bodyStyle={{
                           padding: '12px 16px',
                         }}
                       >
-                        <div style={{
-                          color: message.type === 'user' ? '#000000' : 'var(--ant-color-text)',
-                          lineHeight: '1.5',
-                          textShadow: 'none',
-                          fontWeight: message.type === 'user' ? '500' : 'normal'
-                        }}>
-                          <span style={{
-                            color: message.type === 'user' ? '#000000 !important' : 'inherit',
-                            textShadow: 'none',
-                            fontSize: '14px',
-                            fontWeight: message.type === 'user' ? '500' : 'normal'
-                          }}>
-                            {message.content}
-                          </span>
-                          {message.selected_collections && (
-                            <div style={{ marginTop: 8 }}>
-                              <Text
-                                style={{
-                                  fontSize: '12px',
-                                  color: message.type === 'user' ? '#666666' : 'var(--ant-color-text-secondary)',
-                                  fontWeight: message.type === 'user' ? 'normal' : 'normal'
-                                }}
-                              >
-                                查询集合: {message.selected_collections.join(', ')}
-                              </Text>
+                        {/* 用户查询内容或AI回答内容 */}
+                        {message.type === 'user' ? (
+                          <>
+                            <div
+                              className="user-query-text"
+                              style={{
+                                color: '#1f2937 !important',
+                                lineHeight: '1.6',
+                                textShadow: 'none',
+                                fontWeight: 'normal',
+                                whiteSpace: 'pre-wrap',
+                                fontSize: '14px',
+                                opacity: 1,
+                                visibility: 'visible',
+                                WebkitTextFillColor: '#1f2937'
+                              }}>
+                              {message.content}
                             </div>
-                          )}
-                        </div>
-
-                        {/* LLM响应内容 */}
-                        {message.llm_response && (
-                          <div style={{
-                            marginTop: 12,
-                            padding: '12px',
-                            backgroundColor: 'var(--ant-color-bg-layout)',
-                            borderRadius: '8px',
-                            border: '1px solid var(--ant-color-border)',
-                          }}>
+                            {message.selected_collections && (
+                              <div style={{ marginTop: 8 }}>
+                                <Text
+                                  style={{
+                                    fontSize: '12px',
+                                    color: '#6b7280',
+                                    fontWeight: 'normal'
+                                  }}
+                                >
+                                  查询集合: {message.selected_collections.join(', ')}
+                                </Text>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <>
                             <div style={{
-                              whiteSpace: 'pre-wrap',
+                              color: '#1f2937 !important',
                               lineHeight: '1.6',
-                              color: 'var(--ant-color-text)',
+                              textShadow: 'none',
+                              fontWeight: 'normal',
+                              whiteSpace: 'pre-wrap',
+                              WebkitTextFillColor: '#1f2937',
+                              opacity: 1
                             }}>
-                              {message.llm_response}
+                              {message.llm_response || message.content}
                               {message.is_streaming && (
                                 <span className="typing-cursor">|</span>
                               )}
                             </div>
-                          </div>
+                          </>
                         )}
 
                         <div style={{
                           marginTop: 8,
                           fontSize: '12px',
                           opacity: 0.8,
-                          color: message.type === 'user' ? '#666666' : 'var(--ant-color-text-secondary)',
+                          color: '#6b7280',
                         }}>
                           {message.timestamp}
                           {message.is_streaming && (
