@@ -733,6 +733,11 @@ async def upload_document(
     start_time = time.time()
 
     try:
+        # 获取RAG分块器相关类
+        RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config = get_rag_chunker()
+        if not ChunkingConfig:
+            raise HTTPException(status_code=500, detail="RAG分块功能不可用")
+
         # 验证文件名
         if not file.filename:
             raise HTTPException(status_code=400, detail="文件名不能为空")
@@ -789,10 +794,6 @@ async def upload_document(
             raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
 
         # 进行RAG分块
-        RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config = get_rag_chunker()
-        if RAGChunker is None:
-            raise HTTPException(status_code=500, detail="RAG分块功能不可用")
-
         chunker = RAGChunker()
         chunking_result = chunker.chunk_text(text_content, config)
 
@@ -1067,6 +1068,11 @@ async def delete_document_by_filename(collection_name: str, file_name: str):
 async def chunk_text(collection_name: str, request: ChunkTextRequest):
     """对文本进行RAG分块处理（预览功能）"""
     try:
+        # 获取RAG分块器相关类
+        RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config = get_rag_chunker()
+        if not RAGChunker:
+            raise HTTPException(status_code=500, detail="RAG分块功能不可用")
+
         # 验证集合是否存在
         collections = chroma_client.list_collections()
         target_collection = None
@@ -1082,10 +1088,6 @@ async def chunk_text(collection_name: str, request: ChunkTextRequest):
             raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
 
         # 进行RAG分块
-        RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config = get_rag_chunker()
-        if RAGChunker is None:
-            raise HTTPException(status_code=500, detail="RAG分块功能不可用")
-
         chunker = RAGChunker()
         chunking_result = chunker.chunk_text(request.text, request.chunking_config)
 
@@ -1118,6 +1120,11 @@ async def chunk_text(collection_name: str, request: ChunkTextRequest):
 async def get_default_chunking_config_api(method: str):
     """获取指定分块方式的默认配置"""
     try:
+        # 获取RAG分块器相关类
+        RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config = get_rag_chunker()
+        if not ChunkingMethod:
+            raise HTTPException(status_code=500, detail="RAG分块功能不可用")
+
         chunking_method = ChunkingMethod(method)
         config = get_default_chunking_config(chunking_method)
         return config.model_dump()
