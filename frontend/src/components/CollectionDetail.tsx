@@ -616,25 +616,6 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                 ),
                 children: (
                   <div>
-                    {/* 操作栏 */}
-                    <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <Text strong style={{ fontSize: '16px' }}>
-                          文档管理
-                        </Text>
-                        <Text type="secondary" style={{ marginLeft: 8 }}>
-                          ({collectionDetail.count} 个文档)
-                        </Text>
-                      </div>
-                      <Button
-                        type="primary"
-                        icon={<UploadOutlined />}
-                        onClick={() => setUploadModalVisible(true)}
-                      >
-                        上传文档
-                      </Button>
-                    </div>
-
                     {collectionDetail.count === 0 ? (
                       <Empty
                         description="该集合暂无文档"
@@ -651,6 +632,25 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                       </Empty>
                     ) : (
                       <div>
+                        {/* 操作栏 */}
+                        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <Text strong style={{ fontSize: '16px' }}>
+                              文档管理
+                            </Text>
+                            <Text type="secondary" style={{ marginLeft: 8 }}>
+                              ({collectionDetail.count} 个文档)
+                            </Text>
+                          </div>
+                          <Button
+                            type="primary"
+                            icon={<UploadOutlined />}
+                            onClick={() => setUploadModalVisible(true)}
+                          >
+                            上传文档
+                          </Button>
+                        </div>
+
                         {collectionDetail.count > 100 && (
                         <div style={{ marginBottom: 16, padding: 12, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6 }}>
                           <Text type="secondary">
@@ -825,8 +825,9 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                           {
                             title: '操作',
                             key: 'actions',
-                            width: 100,
+                            width: 120,
                             align: 'center',
+                            fixed: 'right',
                             render: (_, record) => (
                               <Space size="small">
                                 <Popconfirm
