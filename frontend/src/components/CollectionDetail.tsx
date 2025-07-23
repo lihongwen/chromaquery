@@ -178,9 +178,9 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
       return false;
     }
 
-    // 检查文件大小 (50MB限制)
-    if (!validateFileSize(file, 50)) {
-      message.error('文件大小不能超过 50MB');
+    // 检查文件大小 (150MB限制)
+    if (!validateFileSize(file, 150)) {
+      message.error('文件大小不能超过 150MB');
       return false;
     }
 
@@ -633,22 +633,13 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                     ) : (
                       <div>
                         {/* 操作栏 */}
-                        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div>
-                            <Text strong style={{ fontSize: '16px' }}>
-                              文档管理
-                            </Text>
-                            <Text type="secondary" style={{ marginLeft: 8 }}>
-                              ({collectionDetail.count} 个文档)
-                            </Text>
-                          </div>
-                          <Button
-                            type="primary"
-                            icon={<UploadOutlined />}
-                            onClick={() => setUploadModalVisible(true)}
-                          >
-                            上传文档
-                          </Button>
+                        <div style={{ marginBottom: 16 }}>
+                          <Text strong style={{ fontSize: '16px' }}>
+                            文档管理
+                          </Text>
+                          <Text type="secondary" style={{ marginLeft: 8 }}>
+                            ({collectionDetail.count} 个文档)
+                          </Text>
                         </div>
 
                         {collectionDetail.count > 100 && (
@@ -693,21 +684,21 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                             title: '内容预览',
                             dataIndex: 'document',
                             key: 'document',
+                            width: 250,
                             ellipsis: true,
                             render: (document) => (
                               document ? (
                                 <Paragraph
                                   ellipsis={{
                                     rows: 2,
-                                    expandable: true,
-                                    symbol: '展开',
-                                    tooltip: '点击展开完整内容'
+                                    expandable: false,
+                                    suffix: '...'
                                   }}
                                   style={{
                                     margin: 0,
                                     fontSize: '13px',
                                     lineHeight: '1.4',
-                                    maxWidth: '300px'
+                                    maxWidth: '230px'
                                   }}
                                 >
                                   {document}
@@ -719,42 +710,7 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                               )
                             )
                           },
-                          {
-                            title: '块数',
-                            dataIndex: 'totalChunks',
-                            key: 'chunks',
-                            width: 120,
-                            responsive: ['lg'],
-                            render: (totalChunks, record) => {
-                              const chunkMethod = record.chunkMethod;
 
-                              return (
-                                <div style={{ fontSize: '12px' }}>
-                                  <div>
-                                    <Text strong style={{ color: '#52c41a' }}>
-                                      总共拆分了{totalChunks}块
-                                    </Text>
-                                  </div>
-                                  {chunkMethod && chunkMethod !== '未知' && (
-                                    <div style={{ marginTop: 2 }}>
-                                      <Tag color="orange" style={{ fontSize: '9px' }}>
-                                        {chunkMethod === 'recursive' ? '递归分块' :
-                                         chunkMethod === 'fixed_size' ? '固定分块' :
-                                         chunkMethod === 'semantic' ? '语义分块' : chunkMethod}
-                                      </Tag>
-                                    </div>
-                                  )}
-                                  {record.metadata?.model && (
-                                    <div style={{ marginTop: 2 }}>
-                                      <Tag color="green" style={{ fontSize: '9px' }}>
-                                        {record.metadata.model === 'alibaba-text-embedding-v4' ? '阿里云' : '默认'}
-                                      </Tag>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            }
-                          },
                           {
                             title: '向量信息',
                             dataIndex: 'embedding',
@@ -788,34 +744,45 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                             }
                           },
                           {
-                            title: '块信息',
+                            title: '块数信息',
                             key: 'chunk_info',
-                            width: 120,
-                            responsive: ['xl'],
+                            width: 150,
+                            responsive: ['lg'],
                             render: (_, record) => {
-                              const chunkMethod = record.metadata?.chunk_method || '未知';
+                              const chunkMethod = record.chunkMethod;
+                              const totalChunks = record.totalChunks;
                               const chunkSize = record.metadata?.chunk_size;
                               const textLength = record.document ? record.document.length : 0;
 
                               return (
-                                <div style={{ fontSize: '11px' }}>
+                                <div style={{ fontSize: '12px' }}>
                                   <div>
-                                    <Text type="secondary">
-                                      字符: {textLength}
+                                    <Text strong style={{ color: '#52c41a', fontWeight: 'bold' }}>
+                                      {totalChunks}块
                                     </Text>
                                   </div>
-                                  {chunkMethod !== '未知' && (
+                                  {chunkMethod && chunkMethod !== '未知' && (
                                     <div style={{ marginTop: 2 }}>
                                       <Tag color="orange" style={{ fontSize: '9px' }}>
-                                        {chunkMethod === 'recursive' ? '递归' :
-                                         chunkMethod === 'fixed_size' ? '固定' :
-                                         chunkMethod === 'semantic' ? '语义' : chunkMethod}
+                                        {chunkMethod === 'recursive' ? '递归分块' :
+                                         chunkMethod === 'fixed_size' ? '固定分块' :
+                                         chunkMethod === 'semantic' ? '语义分块' : chunkMethod}
                                       </Tag>
                                     </div>
                                   )}
                                   {chunkSize && (
-                                    <div style={{ marginTop: 2, color: '#999' }}>
+                                    <div style={{ marginTop: 2, color: '#999', fontSize: '11px' }}>
                                       块大小: {chunkSize}
+                                    </div>
+                                  )}
+                                  <div style={{ marginTop: 2, color: '#999', fontSize: '11px' }}>
+                                    字符: {textLength}
+                                  </div>
+                                  {record.metadata?.model && (
+                                    <div style={{ marginTop: 2 }}>
+                                      <Tag color="green" style={{ fontSize: '9px' }}>
+                                        {record.metadata.model === 'alibaba-text-embedding-v4' ? '阿里云' : '默认'}
+                                      </Tag>
                                     </div>
                                   )}
                                 </div>
@@ -1007,7 +974,7 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
               <p className="ant-upload-hint">
                 支持多种文档格式：文本(.txt)、PDF(.pdf)、Word(.docx/.doc)、PowerPoint(.pptx/.ppt)、Markdown(.md)、RTF(.rtf)、Excel(.xlsx/.xls)、CSV(.csv)
                 <br />
-                文件大小不超过 50MB
+                文件大小不超过 150MB
               </p>
             </Upload.Dragger>
 

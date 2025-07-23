@@ -24,6 +24,7 @@ import {
   UserOutlined,
   RobotOutlined,
   EyeOutlined,
+  EyeInvisibleOutlined,
   CopyOutlined,
   SearchOutlined,
   DatabaseOutlined
@@ -109,6 +110,7 @@ const QueryTab: React.FC = () => {
   });
   const [siderCollapsed, setSiderCollapsed] = useState(false);
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
+  const [showResultsList, setShowResultsList] = useState<Set<string>>(new Set());
   const [collections, setCollections] = useState<CollectionInfo[]>([]);
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
@@ -357,6 +359,19 @@ const QueryTab: React.FC = () => {
         newSet.delete(resultId);
       } else {
         newSet.add(resultId);
+      }
+      return newSet;
+    });
+  };
+
+  // 切换整体文档列表的显示/隐藏状态
+  const toggleResultsList = (messageId: string) => {
+    setShowResultsList(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId);
+      } else {
+        newSet.add(messageId);
       }
       return newSet;
     });
@@ -681,71 +696,118 @@ const QueryTab: React.FC = () => {
                       
                       {message.results && message.results.length > 0 && (
                         <div style={{ marginTop: 12 }}>
-                          <Alert
-                            message={`找到 ${message.results.length} 个相关文档`}
-                            type="success"
-                            showIcon
-                            style={{ marginBottom: 12 }}
-                          />
-                          
-                          <List
-                            size="small"
-                            dataSource={message.results}
-                            renderItem={(result) => (
-                              <List.Item>
-                                <Card
-                                  size="small"
-                                  style={{ width: '100%' }}
-                                  title={
-                                    <Space>
-                                      <span style={{
-                                        backgroundColor: '#e6f7ff',
-                                        color: '#0050b3',
-                                        padding: '4px 12px',
-                                        borderRadius: '16px',
-                                        fontSize: '13px',
-                                        fontWeight: '600'
-                                      }}>
-                                        相似度: {(Math.max(0, Math.min(100, (1 / (1 + result.distance)) * 100))).toFixed(1)}%
-                                      </span>
-                                      <Tag color="blue">
-                                        {result.metadata.source || result.collection_name}
-                                      </Tag>
-                                    </Space>
-                                  }
-                                  extra={
-                                    <Space>
-                                      <Button
-                                        size="small"
-                                        icon={<EyeOutlined />}
-                                        type="text"
-                                        onClick={() => toggleResultExpansion(result.id)}
-                                      >
-                                        {expandedResults.has(result.id) ? '收起' : '查看'}
-                                      </Button>
-                                      <Button 
-                                        size="small" 
-                                        icon={<CopyOutlined />}
-                                        type="text"
-                                        onClick={() => handleCopyContent(result.document)}
-                                      >
-                                        复制
-                                      </Button>
-                                    </Space>
-                                  }
-                                >
-                                  <Text>
-                                    {expandedResults.has(result.id)
-                                      ? result.document
-                                      : result.document.length > 200
-                                        ? result.document.substring(0, 200) + '...'
-                                        : result.document
+                          {/* 查询结果汇总信息 */}
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '12px 16px',
+                            backgroundColor: '#f0f9ff',
+                            border: '1px solid #bae6fd',
+                            borderRadius: '8px',
+                            marginBottom: '12px'
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '16px' }}>✅</span>
+                              <Text strong style={{ color: '#0369a1', fontSize: '14px' }}>
+                                找到 {message.results.length} 个相关文档
+                              </Text>
+                              {!showResultsList.has(message.id) && (
+                                <Text type="secondary" style={{ fontSize: '12px', marginLeft: '8px' }}>
+                                  点击"展开"查看详细结果
+                                </Text>
+                              )}
+                            </div>
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={showResultsList.has(message.id) ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                              onClick={() => toggleResultsList(message.id)}
+                              style={{ color: '#0369a1' }}
+                            >
+                              {showResultsList.has(message.id) ? '收起详情' : '展开详情'}
+                            </Button>
+                          </div>
+
+                          {/* 文档列表 - 只在展开时显示 */}
+                          {showResultsList.has(message.id) && (
+                            <List
+                              size="small"
+                              dataSource={message.results}
+                            renderItem={(result) => {
+                              const isExpanded = expandedResults.has(result.id);
+
+                              return (
+                                <List.Item>
+                                  <Card
+                                    size="small"
+                                    style={{ width: '100%' }}
+                                    title={
+                                      <Space>
+                                        <span style={{
+                                          backgroundColor: '#e6f7ff',
+                                          color: '#0050b3',
+                                          padding: '4px 12px',
+                                          borderRadius: '16px',
+                                          fontSize: '13px',
+                                          fontWeight: '600'
+                                        }}>
+                                          相似度: {(Math.max(0, Math.min(100, (1 / (1 + result.distance)) * 100))).toFixed(1)}%
+                                        </span>
+                                        <Tag color="blue">
+                                          {result.metadata.source || result.collection_name}
+                                        </Tag>
+                                        {/* 默认状态下显示文档简要信息 */}
+                                        {!isExpanded && result.metadata.file_name && (
+                                          <Text type="secondary" style={{ fontSize: '12px' }}>
+                                            📄 {result.metadata.file_name}
+                                            {result.metadata.chunk_index !== undefined && ` • 第${result.metadata.chunk_index + 1}块`}
+                                          </Text>
+                                        )}
+                                      </Space>
                                     }
-                                  </Text>
-                                </Card>
-                              </List.Item>
-                            )}
-                          />
+                                    extra={
+                                      <Space>
+                                        <Button
+                                          size="small"
+                                          icon={isExpanded ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                                          type="text"
+                                          onClick={() => toggleResultExpansion(result.id)}
+                                          style={{ color: '#1890ff' }}
+                                        >
+                                          {isExpanded ? '收起' : '展开'}
+                                        </Button>
+                                        <Button
+                                          size="small"
+                                          icon={<CopyOutlined />}
+                                          type="text"
+                                          onClick={() => handleCopyContent(result.document)}
+                                          style={{ color: '#52c41a' }}
+                                        >
+                                          复制
+                                        </Button>
+                                      </Space>
+                                    }
+                                  >
+                                    {/* 只在展开时显示文档内容 */}
+                                    {isExpanded && (
+                                      <Text style={{ whiteSpace: 'pre-wrap', fontSize: '13px', lineHeight: '1.5' }}>
+                                        {result.document}
+                                      </Text>
+                                    )}
+
+                                    {/* 默认状态下不显示内容，只显示标题信息 */}
+                                    {!isExpanded && (
+                                      <Text type="secondary" style={{ fontSize: '12px', fontStyle: 'italic' }}>
+                                        点击"展开"查看文档内容
+                                      </Text>
+                                    )}
+                                  </Card>
+                                </List.Item>
+                              );
+                            }}
+                            />
+                          )}
                         </div>
                       )}
                     </div>

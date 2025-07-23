@@ -127,7 +127,7 @@ export function formatFileSize(bytes: number): string {
 /**
  * 验证文件大小
  */
-export function validateFileSize(file: File, maxSizeMB: number = 50): boolean {
+export function validateFileSize(file: File, maxSizeMB: number = 150): boolean {
   const maxSizeBytes = maxSizeMB * 1024 * 1024;
   return file.size <= maxSizeBytes;
 }

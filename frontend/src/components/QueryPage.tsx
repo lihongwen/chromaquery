@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Layout, Card, List, Input, Button, Select, Space, Typography, message, Empty, Result, Drawer, FloatButton } from 'antd';
-import { SearchOutlined, SendOutlined, MessageOutlined, DatabaseOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined, MenuOutlined, SettingOutlined } from '@ant-design/icons';
+import { SearchOutlined, SendOutlined, MessageOutlined, DatabaseOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined, MenuOutlined, SettingOutlined, EyeOutlined, EyeInvisibleOutlined, CopyOutlined } from '@ant-design/icons';
 import ThemeToggle from './ThemeToggle';
 import { useResponsive } from '../hooks/useResponsive';
 import { api, API_BASE_URL } from '../config/api';
@@ -121,6 +121,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
   const [loading, setLoading] = useState(false);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
+  const [showResultsList, setShowResultsList] = useState<Set<string>>(new Set());
   const [, setStreamingMessageId] = useState<string | null>(null);
 
   // 用于滚动到最新消息的引用
@@ -171,6 +172,19 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
         newSet.delete(resultId);
       } else {
         newSet.add(resultId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // 切换整体文档列表的显示/隐藏状态
+  const toggleResultsList = useCallback((messageId: string) => {
+    setShowResultsList(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId);
+      } else {
+        newSet.add(messageId);
       }
       return newSet;
     });
@@ -971,74 +985,153 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                           {/* 查询结果展示 - 只在没有LLM回答时显示，或作为可展开的参考资料 */}
                           {message.query_results && message.query_results.length > 0 && !message.llm_response ? (
                             <div style={{ marginTop: '12px' }}>
-                              <Title level={5}>查询结果:</Title>
-                              <List
-                                size="small"
-                                dataSource={message.query_results}
+                              {/* 查询结果汇总信息 */}
+                              <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                padding: '12px 16px',
+                                backgroundColor: '#f0f9ff',
+                                border: '1px solid #bae6fd',
+                                borderRadius: '8px',
+                                marginBottom: '12px'
+                              }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '16px' }}>✅</span>
+                                  <Text strong style={{ color: '#0369a1', fontSize: '14px' }}>
+                                    找到 {message.query_results.length} 个相关文档
+                                  </Text>
+                                  {!showResultsList.has(message.id) && (
+                                    <Text type="secondary" style={{ fontSize: '12px', marginLeft: '8px' }}>
+                                      点击"展开"查看详细结果
+                                    </Text>
+                                  )}
+                                </div>
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  icon={showResultsList.has(message.id) ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                                  onClick={() => toggleResultsList(message.id)}
+                                  style={{ color: '#0369a1' }}
+                                >
+                                  {showResultsList.has(message.id) ? '收起详情' : '展开详情'}
+                                </Button>
+                              </div>
+
+                              {/* 文档列表 - 只在展开时显示 */}
+                              {showResultsList.has(message.id) && (
+                                <List
+                                  size="small"
+                                  dataSource={message.query_results}
                                 renderItem={(result, index) => {
                                   const isExpanded = expandedResults.has(result.id);
-                                  const shouldTruncate = result.document.length > 200;
-                                  const displayText = shouldTruncate && !isExpanded
-                                    ? `${result.document.substring(0, 200)}...`
-                                    : result.document;
 
                                   return (
-                                    <List.Item style={{ padding: '8px 12px', backgroundColor: '#fafafa', marginBottom: '8px', borderRadius: '6px' }}>
-                                      <List.Item.Meta
-                                        title={
+                                    <List.Item style={{ padding: '12px', backgroundColor: '#fafafa', marginBottom: '8px', borderRadius: '8px', border: '1px solid #e8e8e8' }}>
+                                      <div style={{ width: '100%' }}>
+                                        {/* 文档标题栏 - 始终显示 */}
+                                        <div style={{
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          alignItems: 'center',
+                                          marginBottom: isExpanded ? '12px' : '0',
+                                          paddingBottom: isExpanded ? '8px' : '0',
+                                          borderBottom: isExpanded ? '1px solid #e8e8e8' : 'none'
+                                        }}>
                                           <Space>
-                                            <Text strong style={{ color: '#1890ff' }}>#{index + 1}</Text>
+                                            <Text strong style={{ color: '#1890ff', fontSize: '14px' }}>#{index + 1}</Text>
                                             <span style={{
                                               backgroundColor: '#e6f7ff',
                                               color: '#0050b3',
-                                              padding: '2px 8px',
-                                              borderRadius: '12px',
+                                              padding: '4px 12px',
+                                              borderRadius: '16px',
                                               fontSize: '12px',
                                               fontWeight: '600'
                                             }}>
                                               相似度: {(Math.max(0, Math.min(100, (1 / (1 + result.distance)) * 100))).toFixed(1)}%
                                             </span>
                                             <Text type="secondary" style={{ fontSize: '12px' }}>
-                                              集合: {result.collection_name}
+                                              {result.collection_name}
                                             </Text>
-                                          </Space>
-                                        }
-                                        description={
-                                          <div>
-                                            <div style={{ marginBottom: '8px' }}>
-                                              <Text style={{ whiteSpace: 'pre-wrap' }}>
-                                                {displayText}
+                                            {/* 默认状态下显示文档简要信息 */}
+                                            {!isExpanded && (
+                                              <Text type="secondary" style={{ fontSize: '12px', marginLeft: '8px' }}>
+                                                {result.metadata.file_name && `📄 ${result.metadata.file_name}`}
+                                                {result.metadata.chunk_index !== undefined && ` • 第${result.metadata.chunk_index + 1}块`}
                                               </Text>
-                                              {shouldTruncate && (
-                                                <Button
-                                                  type="link"
-                                                  size="small"
-                                                  style={{ padding: '0 4px', height: 'auto' }}
-                                                  onClick={() => toggleResultExpansion(result.id)}
-                                                >
-                                                  {isExpanded ? '收起' : '查看完整内容'}
-                                                </Button>
-                                              )}
+                                            )}
+                                          </Space>
+                                          <Space>
+                                            <Button
+                                              type="text"
+                                              size="small"
+                                              icon={isExpanded ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                                              onClick={() => toggleResultExpansion(result.id)}
+                                              style={{ color: '#1890ff' }}
+                                            >
+                                              {isExpanded ? '收起' : '展开'}
+                                            </Button>
+                                            <Button
+                                              type="text"
+                                              size="small"
+                                              icon={<CopyOutlined />}
+                                              onClick={() => {
+                                                navigator.clipboard.writeText(result.document);
+                                                message.success('内容已复制到剪贴板');
+                                              }}
+                                              style={{ color: '#52c41a' }}
+                                            >
+                                              复制
+                                            </Button>
+                                          </Space>
+                                        </div>
+
+                                        {/* 文档内容 - 只在展开时显示 */}
+                                        {isExpanded && (
+                                          <>
+                                            <div style={{ marginBottom: '12px' }}>
+                                              <Text style={{
+                                                whiteSpace: 'pre-wrap',
+                                                fontSize: '13px',
+                                                lineHeight: '1.5',
+                                                color: '#333'
+                                              }}>
+                                                {result.document}
+                                              </Text>
                                             </div>
+
+                                            {/* 文档元信息 - 只在展开时显示详细信息 */}
                                             {result.metadata.file_name && (
-                                              <div style={{ marginTop: '4px' }}>
-                                                <Text type="secondary" style={{ fontSize: '12px' }}>
-                                                  📄 文件: {result.metadata.file_name}
-                                                </Text>
-                                                {result.metadata.chunk_index !== undefined && (
-                                                  <Text type="secondary" style={{ fontSize: '12px', marginLeft: '8px' }}>
-                                                    📝 块: {result.metadata.chunk_index + 1}
+                                              <div style={{
+                                                marginTop: '8px',
+                                                paddingTop: '8px',
+                                                borderTop: '1px solid #f0f0f0'
+                                              }}>
+                                                <Space>
+                                                  <Text type="secondary" style={{ fontSize: '12px' }}>
+                                                    📄 文件: {result.metadata.file_name}
                                                   </Text>
-                                                )}
+                                                  {result.metadata.chunk_index !== undefined && (
+                                                    <Text type="secondary" style={{ fontSize: '12px' }}>
+                                                      📝 块序号: {result.metadata.chunk_index + 1}
+                                                    </Text>
+                                                  )}
+                                                  {result.metadata.chunk_method && (
+                                                    <Text type="secondary" style={{ fontSize: '12px' }}>
+                                                      🔧 分块方法: {result.metadata.chunk_method}
+                                                    </Text>
+                                                  )}
+                                                </Space>
                                               </div>
                                             )}
-                                          </div>
-                                        }
-                                      />
+                                          </>
+                                        )}
+                                      </div>
                                     </List.Item>
                                   );
                                 }}
-                              />
+                                />
+                              )}
                             </div>
                           ) : message.query_results && message.query_results.length === 0 && (
                             <div style={{ marginTop: '12px', textAlign: 'center', padding: '20px', backgroundColor: '#fafafa', borderRadius: '6px' }}>
