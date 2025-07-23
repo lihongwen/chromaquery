@@ -79,6 +79,35 @@ class HierarchicalConfig:
     smart_boundary: bool = True        # 是否启用智能边界检测
     context_expansion: bool = True     # 是否启用上下文扩展
 
+    # 智能粒度匹配配置
+    enable_intelligent_granularity: bool = True  # 启用智能粒度匹配
+    query_length_thresholds: dict = None         # 查询长度阈值
+    granularity_weights: dict = None             # 不同粒度的权重配置
+
+    def __post_init__(self):
+        """初始化默认配置"""
+        if self.query_length_thresholds is None:
+            self.query_length_thresholds = {
+                'short': 50,     # 短查询阈值（字符数）- 适合中文
+                'medium': 120,   # 中查询阈值（字符数）- 适合中文
+            }
+
+        if self.granularity_weights is None:
+            self.granularity_weights = {
+                'short': {
+                    'child_weight': 0.8,    # 短查询优先子chunk
+                    'parent_weight': 0.2
+                },
+                'medium': {
+                    'child_weight': 0.5,    # 中查询平衡
+                    'parent_weight': 0.5
+                },
+                'long': {
+                    'child_weight': 0.3,    # 长查询优先父chunk
+                    'parent_weight': 0.7
+                }
+            }
+
 class HierarchicalChunker:
     """层次化分块器"""
 
@@ -401,10 +430,38 @@ class HierarchicalRetriever:
         for i, chunk in enumerate(self.child_chunks):
             chunk.embedding = self.child_embeddings[i]
 
+    def _analyze_query_length(self, query: str) -> str:
+        """分析查询长度并返回查询类型"""
+        query_length = len(query)
+
+        if query_length < self.config.query_length_thresholds['short']:
+            query_type = 'short'
+        elif query_length < self.config.query_length_thresholds['medium']:
+            query_type = 'medium'
+        else:
+            query_type = 'long'
+
+        logger.info(f"查询长度分析: 查询长度={query_length}, 类型={query_type}")
+        return query_type
+
+    def _get_granularity_weights(self, query_type: str) -> dict:
+        """根据查询类型获取粒度权重"""
+        weights = self.config.granularity_weights.get(query_type,
+                                                     self.config.granularity_weights['medium'])
+        logger.info(f"粒度权重配置: {query_type} -> {weights}")
+        return weights
+
     def search(self, query: str) -> List[HierarchicalResult]:
-        """层次化混合检索"""
+        """智能粒度匹配的层次化混合检索"""
         if not self.child_chunks:
             return []
+
+        # 智能粒度匹配：分析查询长度
+        query_type = None
+        granularity_weights = None
+        if self.config.enable_intelligent_granularity:
+            query_type = self._analyze_query_length(query)
+            granularity_weights = self._get_granularity_weights(query_type)
 
         # 查询扩展
         if self.config.query_expansion:
@@ -415,12 +472,13 @@ class HierarchicalRetriever:
         # 第一级：子chunk级别的混合检索
         child_results = self._search_child_chunks(query, expanded_query)
 
-        # 第二级：父chunk级别的聚合和重排序
-        hierarchical_results = self._aggregate_to_parent_level(child_results)
+        # 第二级：父chunk级别的聚合和重排序（应用智能粒度权重）
+        hierarchical_results = self._aggregate_to_parent_level(child_results, granularity_weights)
 
         # 第三级：基于位置和语义连贯性的最终排序
-        final_results = self._final_ranking(query, hierarchical_results)
+        final_results = self._final_ranking(query, hierarchical_results, query_type)
 
+        logger.info(f"智能粒度匹配检索完成: 查询类型={query_type}, 返回结果数={len(final_results)}")
         return final_results[:self.config.top_k]
 
     def _search_child_chunks(self, original_query: str, expanded_query: str) -> List[Dict]:
@@ -488,8 +546,8 @@ class HierarchicalRetriever:
             logger.error(f"BM25检索失败: {e}")
             return {}
 
-    def _aggregate_to_parent_level(self, child_results: List[Dict]) -> List[HierarchicalResult]:
-        """聚合到父chunk级别"""
+    def _aggregate_to_parent_level(self, child_results: List[Dict], granularity_weights: dict = None) -> List[HierarchicalResult]:
+        """聚合到父chunk级别（支持智能粒度权重）"""
         parent_aggregation = {}
 
         for child_result in child_results:
@@ -526,6 +584,15 @@ class HierarchicalRetriever:
                 highlight_start = child_chunk.position.start_char
                 highlight_end = child_chunk.position.end_char
 
+                # 应用智能粒度权重调整分数
+                adjusted_hybrid_score = child_result['hybrid_score']
+                if granularity_weights:
+                    # 子chunk分数 * 子chunk权重 + 父chunk平均分数 * 父chunk权重
+                    adjusted_hybrid_score = (
+                        child_result['hybrid_score'] * granularity_weights['child_weight'] +
+                        avg_score * granularity_weights['parent_weight']
+                    )
+
                 hierarchical_result = HierarchicalResult(
                     child_chunk_id=child_chunk.id,
                     parent_chunk_id=parent_id,
@@ -534,7 +601,7 @@ class HierarchicalRetriever:
                     position=child_chunk.position,
                     semantic_score=child_result['semantic_score'],
                     bm25_score=child_result['bm25_score'],
-                    hybrid_score=child_result['hybrid_score'],
+                    hybrid_score=adjusted_hybrid_score,  # 使用调整后的分数
                     final_score=0.0,  # 将在最终排序中计算
                     highlight_start=highlight_start,
                     highlight_end=highlight_end,
@@ -542,6 +609,8 @@ class HierarchicalRetriever:
                         'parent_max_score': agg_data['max_score'],
                         'parent_avg_score': avg_score,
                         'child_count': len(child_results),
+                        'original_hybrid_score': child_result['hybrid_score'],  # 保存原始分数
+                        'granularity_weights': granularity_weights,  # 保存权重信息
                         **parent_chunk.metadata
                     }
                 )
@@ -549,8 +618,8 @@ class HierarchicalRetriever:
 
         return hierarchical_results
 
-    def _final_ranking(self, query: str, hierarchical_results: List[HierarchicalResult]) -> List[HierarchicalResult]:
-        """基于位置和语义连贯性的最终排序"""
+    def _final_ranking(self, query: str, hierarchical_results: List[HierarchicalResult], query_type: str = None) -> List[HierarchicalResult]:
+        """基于位置和语义连贯性的最终排序（支持查询类型优化）"""
         query_tokens = set(jieba.lcut(query.lower()))
 
         for result in hierarchical_results:
@@ -566,16 +635,29 @@ class HierarchicalRetriever:
             # 父chunk质量权重：考虑父chunk的整体质量
             parent_quality_bonus = self._calculate_parent_quality_bonus(result)
 
+            # 根据查询类型调整权重
+            position_weight = self.config.position_weight
+            if query_type == 'short':
+                # 短查询更注重精确匹配，减少位置权重
+                position_weight *= 0.5
+            elif query_type == 'long':
+                # 长查询更注重上下文，增加位置权重
+                position_weight *= 1.5
+
             # 计算最终分数
             result.final_score = (
                 base_score +
-                self.config.position_weight * position_bonus +
+                position_weight * position_bonus +
                 0.05 * coherence_bonus +
                 0.05 * parent_quality_bonus
             )
 
         # 按最终分数排序
         hierarchical_results.sort(key=lambda x: x.final_score, reverse=True)
+
+        if query_type:
+            logger.info(f"最终排序完成: 查询类型={query_type}, 结果数={len(hierarchical_results)}")
+
         return hierarchical_results
 
     def _calculate_position_bonus(self, result: HierarchicalResult, query_tokens: set) -> float:
