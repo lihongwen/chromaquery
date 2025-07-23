@@ -292,23 +292,36 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
     }
 
     try {
-      // 构建分块配置
-      const chunkingConfig: ChunkingConfig = {
-        method: chunkingMethod,
-        chunk_size: values.chunk_size,
-        chunk_overlap: values.chunk_overlap,
-        ...(chunkingMethod === ChunkingMethod.RECURSIVE && {
-          separators: values.separators || ['\n\n', '\n', '。', '！', '？', ';', ':', '，']
-        }),
-        ...(chunkingMethod === ChunkingMethod.SEMANTIC && {
-          semantic_threshold: values.semantic_threshold || 0.7
-        })
-      };
-
       // 创建FormData
       const formData = new FormData();
       formData.append('file', selectedFile);
-      formData.append('chunking_config', JSON.stringify(chunkingConfig));
+
+      // 检查是否为表格文件
+      const isTable = isTableFile(selectedFile.name);
+
+      if (!isTable) {
+        // 普通文件：构建分块配置
+        const chunkingConfig: ChunkingConfig = {
+          method: chunkingMethod,
+          chunk_size: values.chunk_size,
+          chunk_overlap: values.chunk_overlap,
+          ...(chunkingMethod === ChunkingMethod.RECURSIVE && {
+            separators: values.separators || ['\n\n', '\n', '。', '！', '？', ';', ':', '，']
+          }),
+          ...(chunkingMethod === ChunkingMethod.SEMANTIC && {
+            semantic_threshold: values.semantic_threshold || 0.7
+          })
+        };
+        formData.append('chunking_config', JSON.stringify(chunkingConfig));
+      } else {
+        // 表格文件：使用默认配置（后端会忽略）
+        const defaultConfig: ChunkingConfig = {
+          method: ChunkingMethod.RECURSIVE,
+          chunk_size: 1000,
+          chunk_overlap: 200
+        };
+        formData.append('chunking_config', JSON.stringify(defaultConfig));
+      }
 
       // 设置初始上传进度
       setUploadProgress({
@@ -1008,106 +1021,121 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
             )}
           </Form.Item>
 
-          <Divider orientation="left">
-            <Space>
-              <SettingOutlined />
-              RAG分块配置
-            </Space>
-          </Divider>
+          {/* 根据文件类型显示不同的配置 */}
+          {selectedFile && isTableFile(selectedFile.name) ? (
+            // 表格文件提示
+            <Alert
+              message="表格文件处理"
+              description="检测到表格文件（Excel/CSV），将自动使用表格专用处理逻辑，每行数据作为一个文档块，无需配置分块参数。"
+              type="info"
+              showIcon
+              style={{ margin: '16px 0' }}
+            />
+          ) : (
+            // 普通文件的分块配置
+            <>
+              <Divider orientation="left">
+                <Space>
+                  <SettingOutlined />
+                  RAG分块配置
+                </Space>
+              </Divider>
 
-          {/* RAG分块方式选择 */}
-          <Form.Item
-            label="分块方式"
-            required
-          >
-            <Select
-              value={chunkingMethod}
-              onChange={handleChunkingMethodChange}
-              style={{ width: '100%' }}
-            >
-              <Select.Option value={ChunkingMethod.RECURSIVE}>
-                递归分块 (Recursive Text Splitting)
-              </Select.Option>
-              <Select.Option value={ChunkingMethod.FIXED_SIZE}>
-                固定字数分块 (Fixed-size Chunking)
-              </Select.Option>
-              <Select.Option value={ChunkingMethod.SEMANTIC}>
-                语义分块 (Semantic Chunking)
-              </Select.Option>
-            </Select>
-          </Form.Item>
-
-          {/* 分块参数配置 */}
-          <Row gutter={16}>
-            <Col span={12}>
+              {/* RAG分块方式选择 */}
               <Form.Item
-                label="块大小 (字符数)"
-                name="chunk_size"
-                rules={[
-                  { required: true, message: '请输入块大小' },
-                  { type: 'number', min: 100, max: 4000, message: '块大小应在100-4000字符之间' }
-                ]}
+                label="分块方式"
+                required
               >
-                <InputNumber
+                <Select
+                  value={chunkingMethod}
+                  onChange={handleChunkingMethodChange}
                   style={{ width: '100%' }}
-                  placeholder="输入块大小"
-                  min={100}
-                  max={4000}
-                />
+                >
+                  <Select.Option value={ChunkingMethod.RECURSIVE}>
+                    递归分块 (Recursive Text Splitting)
+                  </Select.Option>
+                  <Select.Option value={ChunkingMethod.FIXED_SIZE}>
+                    固定字数分块 (Fixed-size Chunking)
+                  </Select.Option>
+                  <Select.Option value={ChunkingMethod.SEMANTIC}>
+                    语义分块 (Semantic Chunking)
+                  </Select.Option>
+                </Select>
               </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                label="重叠长度 (字符数)"
-                name="chunk_overlap"
-                rules={[
-                  { required: true, message: '请输入重叠长度' },
-                  { type: 'number', min: 0, max: 1000, message: '重叠长度应在0-1000字符之间' }
-                ]}
-              >
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder="输入重叠长度"
-                  min={0}
-                  max={1000}
-                />
-              </Form.Item>
-            </Col>
-          </Row>
 
-          {/* 语义分块特有参数 */}
-          {chunkingMethod === ChunkingMethod.SEMANTIC && (
-            <Form.Item
-              label="语义相似度阈值"
-              name="semantic_threshold"
-              rules={[
-                { required: true, message: '请输入语义相似度阈值' },
-                { type: 'number', min: 0.1, max: 1.0, message: '阈值应在0.1-1.0之间' }
-              ]}
-            >
-              <InputNumber
-                style={{ width: '100%' }}
-                placeholder="输入语义相似度阈值"
-                min={0.1}
-                max={1.0}
-                step={0.1}
+              {/* 分块参数配置 */}
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item
+                    label="块大小 (字符数)"
+                    name="chunk_size"
+                    rules={[
+                      { required: true, message: '请输入块大小' },
+                      { type: 'number', min: 100, max: 4000, message: '块大小应在100-4000字符之间' }
+                    ]}
+                  >
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      placeholder="输入块大小"
+                      min={100}
+                      max={4000}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    label="重叠长度 (字符数)"
+                    name="chunk_overlap"
+                    rules={[
+                      { required: true, message: '请输入重叠长度' },
+                      { type: 'number', min: 0, max: 1000, message: '重叠长度应在0-1000字符之间' }
+                    ]}
+                  >
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      placeholder="输入重叠长度"
+                      min={0}
+                      max={1000}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              {/* 语义分块特有参数 */}
+              {chunkingMethod === ChunkingMethod.SEMANTIC && (
+                <Form.Item
+                  label="语义相似度阈值"
+                  name="semantic_threshold"
+                  rules={[
+                    { required: true, message: '请输入语义相似度阈值' },
+                    { type: 'number', min: 0.1, max: 1.0, message: '阈值应在0.1-1.0之间' }
+                  ]}
+                >
+                  <InputNumber
+                    style={{ width: '100%' }}
+                    placeholder="输入语义相似度阈值"
+                    min={0.1}
+                    max={1.0}
+                    step={0.1}
+                  />
+                </Form.Item>
+              )}
+
+              {/* 分块方式说明 */}
+              <Alert
+                message={
+                  chunkingMethod === ChunkingMethod.RECURSIVE
+                    ? "递归分块：按照指定的分隔符（如段落、句子）递归地分割文本，保持语义完整性"
+                    : chunkingMethod === ChunkingMethod.FIXED_SIZE
+                    ? "固定字数分块：按照固定的字符数量分割文本，简单高效"
+                    : "语义分块：基于语义相似度分割文本，保持语义连贯性，适合复杂文档"
+                }
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
               />
-            </Form.Item>
+            </>
           )}
-
-          {/* 分块方式说明 */}
-          <Alert
-            message={
-              chunkingMethod === ChunkingMethod.RECURSIVE
-                ? "递归分块：按照指定的分隔符（如段落、句子）递归地分割文本，保持语义完整性"
-                : chunkingMethod === ChunkingMethod.FIXED_SIZE
-                ? "固定字数分块：按照固定的字符数量分割文本，简单高效"
-                : "语义分块：基于语义相似度分割文本，保持语义连贯性，适合复杂文档"
-            }
-            type="info"
-            showIcon
-            style={{ marginBottom: 16 }}
-          />
 
           {/* 上传进度 */}
           {uploadProgress && (

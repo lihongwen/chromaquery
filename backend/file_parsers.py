@@ -736,7 +736,7 @@ class TableFileParser(BaseFileParser):
                 "file_size": len(file_content),
                 "row_count": len(df),
                 "column_count": len(df.columns),
-                "columns": list(df.columns),
+                "columns": ", ".join(str(col) for col in df.columns),  # 转换为字符串
                 "parser": "pandas"
             }
 
@@ -802,7 +802,7 @@ class TableFileParser(BaseFileParser):
                 "encoding": used_encoding,
                 "row_count": len(df),
                 "column_count": len(df.columns),
-                "columns": list(df.columns),
+                "columns": ", ".join(str(col) for col in df.columns),  # 转换为字符串
                 "parser": "pandas"
             }
 
@@ -826,34 +826,66 @@ class TableFileParser(BaseFileParser):
             )
 
     def _analyze_table_columns(self, df) -> Dict[str, str]:
-        """使用LLM智能分析表格列类型"""
+        """使用LLM智能分析表格列类型（基于完整数据样本）"""
         try:
-            # 获取列信息
-            columns_info = {}
-            for col in df.columns:
-                sample_values = df[col].dropna().head(5).tolist()
-                columns_info[col] = {
-                    "sample_values": sample_values,
-                    "dtype": str(df[col].dtype),
-                    "null_count": df[col].isnull().sum(),
-                    "unique_count": df[col].nunique()
-                }
+            # 暂时直接使用简单规则分析，避免LLM调用问题
+            logger.info("使用简单规则进行列分析")
+            return self._simple_column_analysis(df)
 
-            # 调用LLM分析
-            analysis_result = self._call_llm_for_column_analysis(columns_info)
-
-            if analysis_result:
-                return analysis_result
-            else:
-                # 回退到简单规则分析
-                return self._simple_column_analysis(df)
+            # TODO: 修复LLM调用后再启用
+            # 调用LLM分析（传入完整DataFrame）
+            # analysis_result = self._call_llm_for_column_analysis_with_data(df)
+            # if analysis_result:
+            #     return analysis_result
+            # else:
+            #     return self._simple_column_analysis(df)
 
         except Exception as e:
             logger.warning(f"智能列分析失败，使用简单规则: {e}")
             return self._simple_column_analysis(df)
 
+    def _call_llm_for_column_analysis_with_data(self, df) -> Optional[Dict[str, str]]:
+        """调用LLM分析表格列（基于完整数据样本）"""
+        try:
+            from llm_client import get_llm_client
+
+            llm_client = get_llm_client()
+            if not llm_client:
+                return None
+
+            # 构建分析提示（包含完整数据样本）
+            prompt = self._build_column_analysis_prompt_with_data(df)
+
+            # 调用LLM（同步方式）
+            import asyncio
+            messages = [{"role": "user", "content": prompt}]
+
+            # 创建事件循环并运行异步方法
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            # 收集流式响应
+            response_parts = []
+            async def collect_response():
+                async for chunk in llm_client.stream_chat(messages, temperature=0.1, max_tokens=1500):
+                    if chunk.get('content'):
+                        response_parts.append(chunk['content'])
+
+            loop.run_until_complete(collect_response())
+            response = ''.join(response_parts)
+
+            # 解析响应
+            return self._parse_llm_column_response(response)
+
+        except Exception as e:
+            logger.error(f"LLM列分析失败: {e}")
+            return None
+
     def _call_llm_for_column_analysis(self, columns_info: Dict) -> Optional[Dict[str, str]]:
-        """调用LLM分析表格列"""
+        """调用LLM分析表格列（旧版本，保留兼容性）"""
         try:
             from llm_client import get_llm_client
 
@@ -864,12 +896,26 @@ class TableFileParser(BaseFileParser):
             # 构建分析提示
             prompt = self._build_column_analysis_prompt(columns_info)
 
-            # 调用LLM
-            response = llm_client.generate_response(
-                prompt=prompt,
-                temperature=0.1,
-                max_tokens=1000
-            )
+            # 调用LLM（同步方式）
+            import asyncio
+            messages = [{"role": "user", "content": prompt}]
+
+            # 创建事件循环并运行异步方法
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            # 收集流式响应
+            response_parts = []
+            async def collect_response():
+                async for chunk in llm_client.stream_chat(messages, temperature=0.1, max_tokens=1000):
+                    if chunk.get('content'):
+                        response_parts.append(chunk['content'])
+
+            loop.run_until_complete(collect_response())
+            response = ''.join(response_parts)
 
             # 解析响应
             return self._parse_llm_column_response(response)
@@ -879,12 +925,21 @@ class TableFileParser(BaseFileParser):
             return None
 
     def _build_column_analysis_prompt(self, columns_info: Dict) -> str:
-        """构建列分析提示"""
+        """构建列分析提示（使用完整数据样本）"""
+        # 从columns_info中获取DataFrame（需要修改调用方式）
+        # 这里先用原有逻辑，稍后会修改整个流程
         prompt = """请分析以下表格的列，判断每列应该作为元数据(metadata)还是内容(content)存储到向量数据库中。
 
 分析规则：
-- metadata列：ID、编号、分类、标签、时间、状态等标识性信息
-- content列：描述、内容、评论、文本等需要进行语义搜索的文本信息
+- **content列**：包含丰富文本信息，适合语义搜索的列
+  * 产品名称、标题、描述、内容、评论、摘要等
+  * 通常包含多个词汇，具有语义含义
+  * 用户会基于这些内容进行搜索查询
+
+- **metadata列**：结构化信息，用于筛选和标识的列
+  * ID、编号、代码、分类、标签、价格、数量、时间、状态等
+  * 通常是标识符、数值、分类或时间信息
+  * 用于过滤和组织数据，而非语义搜索
 
 表格列信息：
 """
@@ -903,6 +958,67 @@ class TableFileParser(BaseFileParser):
     "column_name2": "content",
     ...
 }
+
+只返回JSON，不要其他解释。"""
+
+        return prompt
+
+    def _build_column_analysis_prompt_with_data(self, df) -> str:
+        """构建列分析提示（包含完整数据样本）"""
+        # 限制数据行数，避免token过多
+        sample_rows = min(15, len(df))
+        df_sample = df.head(sample_rows)
+
+        prompt = f"""请分析以下表格数据，判断每列应该作为元数据(metadata)还是内容(content)存储到向量数据库中。
+
+**分析规则：**
+
+**content列** - 适合语义搜索的文本内容：
+- 产品名称、标题、描述、内容、评论、摘要等
+- 包含丰富的文本信息，用户会基于这些内容进行搜索
+- 通常包含多个词汇，具有语义含义
+- 例如：商品描述、文章标题、用户评论等
+
+**metadata列** - 结构化标识信息：
+- ID、编号、代码、分类、价格、数量、时间、状态等
+- 用于筛选、过滤和组织数据
+- 通常是标识符、数值、分类标签或时间信息
+- 例如：商品ID、价格、分类、创建时间等
+
+**表格数据样本（共{len(df)}行，显示前{sample_rows}行）：**
+
+"""
+
+        # 将DataFrame转换为易读的表格格式
+        # 表头
+        headers = list(df_sample.columns)
+        prompt += "| " + " | ".join(headers) + " |\n"
+        prompt += "|" + "|".join([" --- " for _ in headers]) + "|\n"
+
+        # 数据行
+        for idx, row in df_sample.iterrows():
+            row_data = []
+            for col in headers:
+                value = str(row[col]) if row[col] is not None else ""
+                # 限制单元格长度，避免过长
+                if len(value) > 50:
+                    value = value[:47] + "..."
+                row_data.append(value)
+            prompt += "| " + " | ".join(row_data) + " |\n"
+
+        prompt += f"""
+
+**请基于以上完整的数据样本进行分析，考虑：**
+1. 每列的实际内容和数据特征
+2. 哪些列包含丰富的文本信息，适合语义搜索
+3. 哪些列是结构化信息，适合作为筛选条件
+
+请以JSON格式返回分析结果：
+{{
+    "列名1": "content",
+    "列名2": "metadata",
+    ...
+}}
 
 只返回JSON，不要其他解释。"""
 
@@ -933,21 +1049,42 @@ class TableFileParser(BaseFileParser):
         for col in df.columns:
             col_lower = col.lower()
 
-            # 简单规则判断
-            if any(keyword in col_lower for keyword in ['id', '编号', 'number', 'code', '代码']):
-                column_analysis[col] = 'metadata'
-            elif any(keyword in col_lower for keyword in ['time', 'date', '时间', '日期']):
-                column_analysis[col] = 'metadata'
-            elif any(keyword in col_lower for keyword in ['status', 'state', '状态', '类型', 'type', 'category', '分类']):
-                column_analysis[col] = 'metadata'
-            elif any(keyword in col_lower for keyword in ['content', 'description', 'text', '内容', '描述', '评论', 'comment']):
+            # 优先识别content列（包含丰富文本信息的列）
+            if any(keyword in col_lower for keyword in [
+                'name', 'title', 'content', 'description', 'text', 'comment', 'summary',
+                '名称', '标题', '内容', '描述', '评论', '摘要', '详情', '说明'
+            ]):
                 column_analysis[col] = 'content'
+            # 明确的metadata列
+            elif any(keyword in col_lower for keyword in [
+                'id', '编号', 'number', 'code', '代码', 'price', '价格', 'amount', '金额',
+                'quantity', '数量', '库存', 'stock', 'count', '计数'
+            ]):
+                column_analysis[col] = 'metadata'
+            elif any(keyword in col_lower for keyword in [
+                'time', 'date', '时间', '日期', 'created', 'updated', '创建', '更新'
+            ]):
+                column_analysis[col] = 'metadata'
+            elif any(keyword in col_lower for keyword in [
+                'status', 'state', '状态', 'type', 'category', '分类', '类型', 'tag', '标签'
+            ]):
+                column_analysis[col] = 'metadata'
             else:
-                # 根据数据类型判断
-                if df[col].dtype == 'object' and df[col].str.len().mean() > 20:
-                    column_analysis[col] = 'content'  # 长文本作为内容
+                # 根据数据内容特征判断
+                if df[col].dtype == 'object':
+                    # 计算平均文本长度
+                    avg_length = df[col].astype(str).str.len().mean()
+                    # 计算唯一值比例
+                    unique_ratio = df[col].nunique() / len(df)
+
+                    # 如果平均长度较长且唯一值比例较高，可能是content
+                    if avg_length > 15 and unique_ratio > 0.5:
+                        column_analysis[col] = 'content'
+                    else:
+                        column_analysis[col] = 'metadata'
                 else:
-                    column_analysis[col] = 'metadata'  # 其他作为元数据
+                    # 数值类型通常是metadata
+                    column_analysis[col] = 'metadata'
 
         return column_analysis
 

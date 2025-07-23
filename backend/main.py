@@ -757,14 +757,6 @@ async def upload_document(
         if len(content) > 50 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="文件大小不能超过 50MB")
 
-        # 解析分块配置
-        import json
-        try:
-            config_dict = json.loads(chunking_config)
-            config = ChunkingConfig(**config_dict)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"分块配置格式错误: {e}")
-
         # 使用文件解析器解析文件
         parse_result = file_parser_manager.parse_file(content, file.filename)
 
@@ -773,10 +765,6 @@ async def upload_document(
                 status_code=400,
                 detail=f"文件解析失败: {parse_result.error_message}"
             )
-
-        text_content = parse_result.content
-        if not text_content.strip():
-            raise HTTPException(status_code=400, detail="文件中未提取到有效文本内容")
 
         # 查找集合
         collections = chroma_client.list_collections()
@@ -793,9 +781,27 @@ async def upload_document(
         if not target_collection:
             raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
 
-        # 进行RAG分块
-        chunker = RAGChunker()
-        chunking_result = chunker.chunk_text(text_content, config)
+        # 根据文件类型决定处理方式
+        if parse_result.is_table and parse_result.table_data:
+            # 表格文件：使用表格专用逻辑，不需要分块配置
+            logger.info(f"检测到表格文件 '{file.filename}'，使用表格专用处理逻辑")
+            chunking_result = None  # 表格文件不需要分块
+        else:
+            # 普通文件：解析分块配置并进行分块
+            import json
+            try:
+                config_dict = json.loads(chunking_config)
+                config = ChunkingConfig(**config_dict)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"分块配置格式错误: {e}")
+
+            text_content = parse_result.content
+            if not text_content.strip():
+                raise HTTPException(status_code=400, detail="文件中未提取到有效文本内容")
+
+            # 进行RAG分块
+            chunker = RAGChunker()
+            chunking_result = chunker.chunk_text(text_content, config)
 
         # 准备文档数据
         documents = []
@@ -857,6 +863,9 @@ async def upload_document(
                 ids.append(doc_id)
         else:
             # 普通文件：使用分块处理
+            if chunking_result is None:
+                raise HTTPException(status_code=500, detail="分块处理失败：未生成分块结果")
+
             for chunk in chunking_result.chunks:
                 documents.append(chunk.text)
 
@@ -960,7 +969,10 @@ async def upload_document(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         logger.error(f"文档上传失败: {e}")
+        logger.error(f"详细错误信息: {error_details}")
         raise HTTPException(status_code=500, detail=f"文档上传失败: {str(e)}")
 
 @app.get("/api/supported-formats")

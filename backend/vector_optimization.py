@@ -63,10 +63,8 @@ def get_optimized_collection_metadata(
     elif config.distance_metric == DistanceMetric.IP:
         metadata["hnsw:space"] = "ip"
     
-    # 优化HNSW参数以提高准确性
-    metadata["hnsw:ef_construction"] = 200  # 提高索引质量
-    metadata["hnsw:ef_search"] = 100  # 提高搜索准确性
-    metadata["hnsw:max_neighbors"] = 32  # 增加连接数以提高召回率
+    # Note: ChromaDB 0.4.18 only supports hnsw:space parameter
+    # Advanced HNSW parameters like ef_construction, ef_search, max_neighbors are not supported
     
     # 向量维度配置
     metadata["vector_dimension"] = config.vector_dimension
