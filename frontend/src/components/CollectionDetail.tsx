@@ -870,7 +870,6 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                         bordered
                         scroll={{ x: 1200 }}
                       />
-                      </div>
                     )}
                   </div>
                 )
