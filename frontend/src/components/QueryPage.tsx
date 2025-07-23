@@ -104,10 +104,10 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
       setLeftCollapsed(true);
       setRightCollapsed(true);
     } else if (responsive.isTablet) {
-      setLeftCollapsed(false);
+      setLeftCollapsed(true);
       setRightCollapsed(true);
     } else {
-      setLeftCollapsed(false);
+      setLeftCollapsed(true);
       setRightCollapsed(false);
     }
   }, [responsive.isMobile, responsive.isTablet]);

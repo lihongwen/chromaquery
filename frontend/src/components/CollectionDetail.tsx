@@ -561,10 +561,10 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
           <Col span={6}>
             <Card>
               <Statistic
-                title="文档总数"
-                value={collectionDetail.count}
-                prefix={<FileTextOutlined />}
-                valueStyle={{ color: '#1890ff' }}
+                title="文件数量"
+                value={collectionDetail.uploaded_files?.length || 0}
+                prefix={<FolderOutlined />}
+                valueStyle={{ color: '#fa8c16' }}
               />
             </Card>
           </Col>
@@ -582,10 +582,10 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
           <Col span={6}>
             <Card>
               <Statistic
-                title="文件数量"
-                value={collectionDetail.uploaded_files?.length || 0}
-                prefix={<FolderOutlined />}
-                valueStyle={{ color: '#fa8c16' }}
+                title="文档总数"
+                value={collectionDetail.count}
+                prefix={<FileTextOutlined />}
+                valueStyle={{ color: '#1890ff' }}
               />
             </Card>
           </Col>
