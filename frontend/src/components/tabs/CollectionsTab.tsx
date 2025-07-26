@@ -442,12 +442,14 @@ const CollectionsTab: React.FC = () => {
         </Sider>
       )}
 
-      <Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
+      <Content style={{ padding: selectedCollection ? '0' : 24, height: '100%', overflow: 'auto' }}>
         {selectedCollection ? (
           // 显示集合详情页面
           <CollectionDetail
             collectionName={selectedCollection}
             onBack={() => setSelectedCollection(null)}
+            siderCollapsed={siderCollapsed}
+            isMobile={isMobile}
           />
         ) : (
           <div style={{ position: 'relative', height: '100%' }}>

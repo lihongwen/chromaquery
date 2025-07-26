@@ -102,11 +102,15 @@ interface UploadProgress {
 interface CollectionDetailProps {
   collectionName: string;
   onBack: () => void;
+  siderCollapsed?: boolean;
+  isMobile?: boolean;
 }
 
 const CollectionDetail: React.FC<CollectionDetailProps> = ({
   collectionName,
-  onBack
+  onBack,
+  siderCollapsed = false,
+  isMobile = false
 }) => {
   const [collectionDetail, setCollectionDetail] = useState<CollectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -520,18 +524,23 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
   return (
     <div>
       {/* 集合详情页面的固定Header */}
-      <div style={{
-        height: '48px',
-        lineHeight: '48px',
-        padding: '0 24px',
-        backgroundColor: 'var(--ant-color-bg-container)',
-        borderBottom: '1px solid var(--ant-color-border)',
-        position: 'sticky',
-        top: '88px',
-        zIndex: 99,
-        marginBottom: '16px',
-        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.06)'
-      }}>
+      <div
+        className="collection-detail-header"
+        style={{
+          height: '56px',
+          lineHeight: '56px',
+          padding: '0 24px',
+          backgroundColor: 'var(--ant-color-bg-container)',
+          borderBottom: '1px solid var(--ant-color-border)',
+          position: 'fixed',
+          top: '64px',
+          left: isMobile ? '0' : (siderCollapsed ? '80px' : '280px'),
+          right: '0',
+          zIndex: 101,
+          marginTop: '0px',
+          marginBottom: '0px',
+          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
+        }}>
         <div className="header-title" style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -572,7 +581,8 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
       {/* 内容区域 */}
       <div className="fade-in-up" style={{
         position: 'relative',
-        padding: '0 24px 24px 24px'
+        padding: '0 24px 24px 24px',
+        marginTop: '56px'
       }}>
 
         <Card>

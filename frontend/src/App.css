@@ -403,6 +403,23 @@
   .header-nav-menu .ant-menu-item .anticon {
     margin-right: 4px;
   }
+
+  /* 移动端集合详情页面header优化 */
+  .collection-detail-header {
+    height: 40px !important;
+    line-height: 40px !important;
+    padding: 0 16px !important;
+    margin-bottom: 6px !important;
+  }
+
+  .collection-detail-header .header-title h4 {
+    font-size: 16px !important;
+  }
+
+  .collection-detail-header .header-actions .ant-btn {
+    font-size: 12px !important;
+    padding: 0 8px !important;
+  }
 }
 
 /* 深色主题样式 */
