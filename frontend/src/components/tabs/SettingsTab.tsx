@@ -486,7 +486,7 @@ const SettingsTab: React.FC = () => {
   };
 
   return (
-    <Layout style={{ height: 'calc(100vh - 120px)', minHeight: '500px' }}>
+    <Layout style={{ height: 'calc(100vh - 64px)', minHeight: '500px' }}>
       <Sider
         width={250}
         theme="light"

@@ -597,7 +597,7 @@ const QueryTab: React.FC = () => {
   const siderContent = siderCollapsed ? collapsedSiderContent : expandedSiderContent;
 
   return (
-    <Layout style={{ height: 'calc(100vh - 120px)', minHeight: '500px' }}>
+    <Layout style={{ height: 'calc(100vh - 64px)', minHeight: '500px' }}>
       {!isMobile && (
         <Sider
           width={300}
