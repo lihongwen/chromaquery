@@ -23,7 +23,6 @@ import json
 from datetime import datetime, timedelta
 import time
 from alibaba_embedding import create_alibaba_embedding_function
-from config_manager import config_manager
 from vector_optimization import (
     get_optimized_collection_metadata,
     DEFAULT_OPTIMIZATION_CONFIG,
@@ -92,16 +91,21 @@ def init_chroma_client():
     """初始化ChromaDB客户端"""
     global chroma_client
     try:
-        # 使用配置管理器获取绝对路径
-        chroma_path = config_manager.get_chroma_db_path()
+        # 使用固定的数据路径
+        import os
+        from pathlib import Path
+
+        # 获取项目根目录
+        project_root = Path(__file__).parent.parent.absolute()
+        chroma_path = project_root / "data" / "chroma_data"
+
+        # 确保目录存在
+        chroma_path.mkdir(parents=True, exist_ok=True)
+
         logger.info(f"使用ChromaDB数据路径: {chroma_path}")
 
-        # 验证路径有效性
-        if not config_manager.validate_path(chroma_path):
-            raise Exception(f"ChromaDB数据路径无效: {chroma_path}")
-
         # 使用持久化客户端
-        chroma_client = chromadb.PersistentClient(path=chroma_path)
+        chroma_client = chromadb.PersistentClient(path=str(chroma_path))
         logger.info("ChromaDB客户端初始化成功")
     except Exception as e:
         logger.error(f"ChromaDB客户端初始化失败: {e}")
@@ -228,29 +232,7 @@ class DeleteDocumentResponse(BaseModel):
     deleted_chunks: int
     collection_name: str
 
-# 存储配置相关数据模型
-class StorageConfigRequest(BaseModel):
-    path: str
 
-class StorageConfigResponse(BaseModel):
-    current_path: str
-    path_history: List[str]
-    last_updated: str
-
-class PathInfoResponse(BaseModel):
-    path: str
-    exists: bool
-    is_directory: bool
-    readable: bool
-    writable: bool
-    collections_count: int
-    size_mb: float
-    error: Optional[str] = None
-
-class PathValidationResponse(BaseModel):
-    valid: bool
-    message: str
-    path_info: Optional[PathInfoResponse] = None
 
 # 统计数据相关数据模型
 class QueryLogEntry(BaseModel):
@@ -313,124 +295,9 @@ async def health_check():
         logger.error(f"健康检查失败: {e}")
         raise HTTPException(status_code=503, detail="服务不可用")
 
-# 存储配置API
-@app.get("/api/settings/storage", response_model=StorageConfigResponse)
-async def get_storage_config():
-    """获取当前存储配置"""
-    try:
-        return StorageConfigResponse(
-            current_path=config_manager.get_chroma_db_path(),
-            path_history=config_manager.get_path_history(),
-            last_updated=config_manager._config.get("last_updated", "")
-        )
-    except Exception as e:
-        logger.error(f"获取存储配置失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取存储配置失败: {str(e)}")
 
-@app.post("/api/settings/storage")
-async def set_storage_config(request: StorageConfigRequest):
-    """设置存储路径"""
-    try:
-        # 验证路径
-        if not config_manager.validate_path(request.path):
-            raise HTTPException(status_code=400, detail="路径无效或无法访问")
 
-        # 设置新路径
-        if not config_manager.set_chroma_db_path(request.path):
-            raise HTTPException(status_code=500, detail="设置存储路径失败")
 
-        # 重新初始化ChromaDB客户端
-        init_chroma_client()
-
-        return {
-            "success": True,
-            "message": "存储路径设置成功",
-            "new_path": config_manager.get_chroma_db_path()
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"设置存储路径失败: {e}")
-        raise HTTPException(status_code=500, detail=f"设置存储路径失败: {str(e)}")
-
-@app.post("/api/settings/storage/validate", response_model=PathValidationResponse)
-async def validate_storage_path(request: StorageConfigRequest):
-    """验证存储路径"""
-    try:
-        is_valid = config_manager.validate_path(request.path)
-        path_info = config_manager.get_path_info(request.path)
-
-        message = "路径有效" if is_valid else "路径无效"
-        if "error" in path_info:
-            message = path_info["error"]
-
-        return PathValidationResponse(
-            valid=is_valid,
-            message=message,
-            path_info=PathInfoResponse(**path_info)
-        )
-    except Exception as e:
-        logger.error(f"验证存储路径失败: {e}")
-        return PathValidationResponse(
-            valid=False,
-            message=f"验证失败: {str(e)}"
-        )
-
-@app.get("/api/settings/storage/history")
-async def get_storage_history():
-    """获取存储路径历史记录"""
-    try:
-        history = config_manager.get_path_history()
-        history_with_info = []
-
-        for path in history:
-            path_info = config_manager.get_path_info(path)
-            history_with_info.append({
-                "path": path,
-                "info": path_info
-            })
-
-        return {
-            "history": history_with_info
-        }
-    except Exception as e:
-        logger.error(f"获取存储历史失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取存储历史失败: {str(e)}")
-
-@app.delete("/api/settings/storage/history")
-async def remove_from_storage_history(request: StorageConfigRequest):
-    """从历史记录中移除路径"""
-    try:
-        if config_manager.remove_from_history(request.path):
-            return {"success": True, "message": "已从历史记录中移除"}
-        else:
-            raise HTTPException(status_code=500, detail="移除失败")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"移除历史记录失败: {e}")
-        raise HTTPException(status_code=500, detail=f"移除历史记录失败: {str(e)}")
-
-@app.post("/api/settings/storage/reset")
-async def reset_storage_config():
-    """重置存储配置为默认值"""
-    try:
-        if not config_manager.reset_to_default():
-            raise HTTPException(status_code=500, detail="重置配置失败")
-
-        # 重新初始化ChromaDB客户端
-        init_chroma_client()
-
-        return {
-            "success": True,
-            "message": "已重置为默认配置",
-            "default_path": config_manager.get_chroma_db_path()
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"重置存储配置失败: {e}")
-        raise HTTPException(status_code=500, detail=f"重置存储配置失败: {str(e)}")
 
 @app.get("/api/collections", response_model=List[CollectionInfo])
 async def get_collections():
@@ -1680,9 +1547,11 @@ async def get_analytics_data(
             else:
                 start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
 
-        # 连接conversations数据库
-        db_path = os.path.join(os.path.dirname(__file__), 'conversations.db')
-        conn = sqlite3.connect(db_path)
+        # 连接conversations数据库 - 使用固定的数据路径
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.absolute()
+        db_path = project_root / "data" / "conversations.db"
+        conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
         # 获取总查询数（用户消息）
