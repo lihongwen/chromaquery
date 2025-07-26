@@ -178,7 +178,16 @@ const SettingsTab: React.FC = () => {
       if (response.ok) {
         const config = await response.json();
         console.log('加载的存储配置:', config);
-        setStorageConfig(config);
+
+        // 转换字段名从下划线到驼峰命名
+        const normalizedConfig = {
+          currentPath: config.current_path,
+          pathHistory: config.path_history,
+          lastUpdated: config.last_updated,
+        };
+        console.log('标准化后的配置:', normalizedConfig);
+
+        setStorageConfig(normalizedConfig);
         console.log('存储配置已设置到状态');
         message.success('存储配置加载成功');
       } else {
