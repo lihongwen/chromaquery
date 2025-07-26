@@ -530,8 +530,8 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
           height: '56px',
           lineHeight: '56px',
           padding: '0 24px',
-          backgroundColor: 'var(--ant-color-bg-container)',
-          borderBottom: '1px solid var(--ant-color-border)',
+          backgroundColor: 'transparent',
+          border: 'none',
           position: 'fixed',
           top: '64px',
           left: isMobile ? '0' : (siderCollapsed ? '80px' : '280px'),
@@ -539,7 +539,7 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
           zIndex: 101,
           marginTop: '0px',
           marginBottom: '0px',
-          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
+          boxShadow: 'none'
         }}>
         <div className="header-title" style={{
           display: 'flex',
