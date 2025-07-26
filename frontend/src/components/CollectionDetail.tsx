@@ -552,8 +552,8 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
         backgroundColor: 'var(--ant-color-bg-container)',
         borderBottom: '1px solid var(--ant-color-border)',
         position: 'sticky',
-        top: '0px',
-        zIndex: 100
+        top: '64px',
+        zIndex: 99
       }}>
         <div className="header-title" style={{
           display: 'flex',
@@ -595,7 +595,8 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
       <Content className="fade-in-up" style={{
         position: 'relative',
         padding: '16px 24px 24px 24px',
-        marginTop: '0'
+        marginTop: '0',
+        paddingTop: '16px'
       }}>
 
         <Card>
@@ -957,10 +958,10 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
           onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
           onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
         >
-          文件: {collectionDetail.uploaded_files?.length || 0} |
+          文件: {getGroupedDocuments().length} |
           维度: {getVectorDimension()} |
           文档: {collectionDetail.count.toLocaleString()} |
-          分块: {collectionDetail.chunk_statistics?.methods_used?.length || 0}种
+          方法: {collectionDetail.metadata?.chunking_methods?.length || 1}种
         </div>
       </Content>
 
