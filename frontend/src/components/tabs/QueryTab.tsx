@@ -39,6 +39,7 @@ import {
 } from '@ant-design/icons';
 import { useResponsive } from '../../hooks/useResponsive';
 import { api } from '../../config/api';
+import MarkdownRenderer from '../MarkdownRenderer';
 
 const { Sider, Content } = Layout;
 const { Panel } = Collapse;
@@ -673,6 +674,11 @@ const QueryTab: React.FC = () => {
               }}
               onClick={() => {
                 setCurrentConversation(conversation);
+                // 当选择历史对话时，自动设置该对话使用的集合
+                const firstUserMessage = conversation.messages.find(msg => msg.type === 'user');
+                if (firstUserMessage && firstUserMessage.selected_collections) {
+                  setSelectedCollections(firstUserMessage.selected_collections);
+                }
                 if (isMobile) {
                   setLeftDrawerVisible(false);
                 }
@@ -715,92 +721,6 @@ const QueryTab: React.FC = () => {
       </div>
 
       <Collapse size="small" ghost>
-        <Panel header="📚 集合选择" key="collections">
-          <Form layout="vertical" size="small">
-            <Form.Item label="选择查询集合">
-              <Select
-                mode="multiple"
-                placeholder="请选择要查询的集合"
-                value={selectedCollections}
-                onChange={setSelectedCollections}
-                loading={collectionsLoading}
-                style={{ width: '100%' }}
-                maxTagCount="responsive"
-                showSearch
-                filterOption={(input, option) =>
-                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                }
-                dropdownStyle={{
-                  minWidth: '400px',
-                  maxWidth: '500px',
-                  zIndex: 1050
-                }}
-                optionLabelProp="label"
-              >
-                {collections.map((collection) => (
-                  <Select.Option
-                    key={collection.display_name}
-                    value={collection.display_name}
-                    label={collection.display_name}
-                  >
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      width: '100%',
-                      minWidth: '350px'
-                    }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        flex: 1,
-                        overflow: 'hidden'
-                      }}>
-                        <DatabaseOutlined style={{ marginRight: 8, flexShrink: 0 }} />
-                        <span style={{
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          maxWidth: '250px'
-                        }} title={collection.display_name}>
-                          {collection.display_name}
-                        </span>
-                      </div>
-                      <Tag size="small" style={{ flexShrink: 0, marginLeft: 8 }}>
-                        {collection.count}
-                      </Tag>
-                    </div>
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-
-            {selectedCollections.length === 0 && (
-              <Alert
-                message="请选择至少一个集合进行查询"
-                type="warning"
-                size="small"
-                showIcon
-              />
-            )}
-
-            {collections.length === 0 && !collectionsLoading && (
-              <Alert
-                message="暂无可用集合"
-                description="请先在集合管理页面创建集合，然后刷新此页面"
-                type="info"
-                size="small"
-                showIcon
-                action={
-                  <Button size="small" onClick={fetchCollections}>
-                    刷新
-                  </Button>
-                }
-              />
-            )}
-          </Form>
-        </Panel>
-
         <Panel header="📝 查询历史" key="history">
           <List
             size="small"
@@ -878,7 +798,7 @@ const QueryTab: React.FC = () => {
     <Layout style={{ height: 'calc(100vh - 64px)', minHeight: '500px' }}>
       {!isMobile && (
         <Sider
-          width={300}
+          width={240}
           theme="light"
           collapsible
           collapsed={siderCollapsed}
@@ -965,7 +885,7 @@ const QueryTab: React.FC = () => {
                   {selectedCollections.length === 0 ? (
                     <Alert
                       message="请先选择要查询的集合"
-                      description="在左侧边栏的集合选择区域选择一个或多个集合后即可开始查询"
+                      description="点击右下角的数据库图标选择一个或多个集合后即可开始查询"
                       type="info"
                       showIcon
                       style={{
@@ -1074,11 +994,16 @@ const QueryTab: React.FC = () => {
                               lineHeight: '1.6',
                               textShadow: 'none',
                               fontWeight: 'normal',
-                              whiteSpace: 'pre-wrap',
                               WebkitTextFillColor: '#1f2937',
                               opacity: 1
                             }}>
-                              {message.llm_response || message.content}
+                              <MarkdownRenderer 
+                                content={message.llm_response || message.content}
+                                style={{
+                                  color: '#1f2937',
+                                  fontSize: '14px'
+                                }}
+                              />
                               {message.is_streaming && (
                                 <span className="typing-cursor">|</span>
                               )}
@@ -1247,7 +1172,7 @@ const QueryTab: React.FC = () => {
           >
             {selectedCollections.length === 0 && (
               <Alert
-                message="请先在左侧选择要查询的集合"
+                message="请先点击数据库图标选择要查询的集合"
                 type="warning"
                 showIcon
                 style={{ marginBottom: 12 }}
@@ -1331,11 +1256,7 @@ const QueryTab: React.FC = () => {
                     height: '48px'
                   }}
                   onClick={() => {
-                    if (isMobile) {
-                      setRightDrawerVisible(true);
-                    } else {
-                      setSiderCollapsed(false);
-                    }
+                    setRightDrawerVisible(true);
                   }}
                 />
               </Tooltip>

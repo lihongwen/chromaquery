@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import ThemeToggle from './ThemeToggle';
 import { useResponsive } from '../hooks/useResponsive';
 import { api, API_BASE_URL } from '../config/api';
+import MarkdownRenderer from './MarkdownRenderer';
 
 const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -597,7 +598,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
     </div>
   ), [createNewConversation]);
 
-  // 展开状态下的左侧栏内容 - 提取为独立组件以便复用，并使用useMemo优化
+  // 展开状态下的左侧栏内容 - 移除集合选择，只保留对话历史和快捷操作
   const expandedLeftSiderContent = useMemo(() => (
     <div style={{ padding: 16 }}>
       <Collapse defaultActiveKey={['conversations', 'actions']}>
@@ -622,6 +623,11 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                 }}
                 onClick={() => {
                   setCurrentConversation(conversation);
+                  // 当选择历史对话时，自动设置该对话使用的集合
+                  const firstUserMessage = conversation.messages.find(msg => msg.type === 'user');
+                  if (firstUserMessage && firstUserMessage.selected_collections) {
+                    setSelectedCollections(firstUserMessage.selected_collections);
+                  }
                   if (responsive.isMobile) {
                     setLeftDrawerVisible(false);
                   }
@@ -978,12 +984,17 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                                     color: '#1f2937 !important',
                                     textShadow: 'none',
                                     fontWeight: 'normal',
-                                    whiteSpace: 'pre-wrap',
                                     lineHeight: '1.6',
                                     WebkitTextFillColor: '#1f2937',
                                     opacity: 1
                                   }}>
-                                    {message.llm_response || message.content}
+                                    <MarkdownRenderer 
+                                      content={message.llm_response || message.content}
+                                      style={{
+                                        color: '#1f2937',
+                                        fontSize: '14px'
+                                      }}
+                                    />
                                     {message.is_streaming && (
                                       <span
                                         style={{
