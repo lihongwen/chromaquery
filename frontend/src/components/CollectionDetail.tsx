@@ -550,7 +550,10 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
         lineHeight: '48px',
         padding: '0 24px',
         backgroundColor: 'var(--ant-color-bg-container)',
-        borderBottom: '1px solid var(--ant-color-border)'
+        borderBottom: '1px solid var(--ant-color-border)',
+        position: 'sticky',
+        top: '0px',
+        zIndex: 100
       }}>
         <div className="header-title" style={{
           display: 'flex',
@@ -591,7 +594,8 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
 
       <Content className="fade-in-up" style={{
         position: 'relative',
-        padding: '16px 24px 24px 24px'
+        padding: '16px 24px 24px 24px',
+        marginTop: '0'
       }}>
 
         <Card>

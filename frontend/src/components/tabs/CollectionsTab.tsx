@@ -75,7 +75,7 @@ const CollectionsTab: React.FC = () => {
   const [favoriteCollections, setFavoriteCollections] = useState<Set<string>>(new Set());
 
   // 视图模式状态管理
-  const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
+  const [viewMode, setViewMode] = useState<'card' | 'list'>('list');
 
   // 分页状态管理
   const [currentPage, setCurrentPage] = useState(1);
@@ -475,18 +475,18 @@ const CollectionsTab: React.FC = () => {
           <Col>
             <Button.Group>
               <Button
-                type={viewMode === 'card' ? 'primary' : 'default'}
-                icon={<AppstoreOutlined />}
-                onClick={() => setViewMode('card')}
-              >
-                卡片视图
-              </Button>
-              <Button
                 type={viewMode === 'list' ? 'primary' : 'default'}
                 icon={<UnorderedListOutlined />}
                 onClick={() => setViewMode('list')}
               >
                 列表视图
+              </Button>
+              <Button
+                type={viewMode === 'card' ? 'primary' : 'default'}
+                icon={<AppstoreOutlined />}
+                onClick={() => setViewMode('card')}
+              >
+                卡片视图
               </Button>
             </Button.Group>
           </Col>
