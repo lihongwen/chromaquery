@@ -33,6 +33,7 @@ backend/.venv/
 
 # ChromaDB data
 backend/chroma_data/
+data/
 *.db
 *.sqlite
 *.sqlite3
