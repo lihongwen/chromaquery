@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Layout,
   Card,
   Button,
   Space,
@@ -50,7 +49,6 @@ import {
 } from '../utils/fileUtils';
 import { showError, getDetailedErrorMessage } from '../utils/errorHandler';
 
-const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
 // 文档信息接口
@@ -499,53 +497,30 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
 
   if (loading) {
     return (
-      <Layout>
-        <Header>
-          <div className="header-title">
-            <Title level={3}>
-              <DatabaseOutlined style={{ marginRight: 8 }} />
-              加载中...
-            </Title>
-          </div>
-        </Header>
-        <Content>
-          <div style={{ textAlign: 'center', padding: 100 }}>
-            <Spin size="large" />
-            <div style={{ marginTop: 16 }}>
-              <Text type="secondary">正在加载集合详细信息...</Text>
-            </div>
-          </div>
-        </Content>
-      </Layout>
+      <div style={{ textAlign: 'center', padding: 100 }}>
+        <Spin size="large" />
+        <div style={{ marginTop: 16 }}>
+          <Text type="secondary">正在加载集合详细信息...</Text>
+        </div>
+      </div>
     );
   }
 
   if (!collectionDetail) {
     return (
-      <Layout>
-        <Header>
-          <div className="header-title">
-            <Title level={3}>
-              <DatabaseOutlined style={{ marginRight: 8 }} />
-              集合不存在
-            </Title>
-          </div>
-        </Header>
-        <Content>
-          <div style={{ textAlign: 'center', padding: 100 }}>
-            <Empty description="集合不存在或已被删除" />
-            <Button type="primary" onClick={handleGoBack} style={{ marginTop: 16 }}>
-              返回集合列表
-            </Button>
-          </div>
-        </Content>
-      </Layout>
+      <div style={{ textAlign: 'center', padding: 100 }}>
+        <Empty description="集合不存在或已被删除" />
+        <Button type="primary" onClick={handleGoBack} style={{ marginTop: 16 }}>
+          返回集合列表
+        </Button>
+      </div>
     );
   }
 
   return (
-    <Layout>
-      <Header style={{
+    <div>
+      {/* 集合详情页面的固定Header */}
+      <div style={{
         height: '48px',
         lineHeight: '48px',
         padding: '0 24px',
@@ -553,7 +528,8 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
         borderBottom: '1px solid var(--ant-color-border)',
         position: 'sticky',
         top: '64px',
-        zIndex: 99
+        zIndex: 99,
+        marginBottom: '16px'
       }}>
         <div className="header-title" style={{
           display: 'flex',
@@ -590,13 +566,12 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
             </Button>
           </div>
         </div>
-      </Header>
+      </div>
 
-      <Content className="fade-in-up" style={{
+      {/* 内容区域 */}
+      <div className="fade-in-up" style={{
         position: 'relative',
-        padding: '16px 24px 24px 24px',
-        marginTop: '0',
-        paddingTop: '16px'
+        padding: '0 24px 24px 24px'
       }}>
 
         <Card>
@@ -963,7 +938,7 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
           文档: {collectionDetail.count.toLocaleString()} |
           方法: {collectionDetail.metadata?.chunking_methods?.length || 1}种
         </div>
-      </Content>
+      </div>
 
       {/* 文档上传模态框 */}
       <Modal
@@ -1197,7 +1172,7 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
           </Form.Item>
         </Form>
       </Modal>
-    </Layout>
+    </div>
   );
 };
 
