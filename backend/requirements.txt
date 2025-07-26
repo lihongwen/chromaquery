@@ -6,11 +6,12 @@ python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
-httpx==0.25.2
+httpx>=0.25.2
 pytest==7.4.3
 pytest-asyncio==0.21.1
 # LLM和嵌入模型依赖
 dashscope>=1.14.0
+ollama>=0.5.0
 # 文档处理依赖 - 使用兼容版本，固定langsmith版本避免冲突
 langchain-text-splitters==0.2.2
 langchain-core==0.2.23

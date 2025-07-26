@@ -23,6 +23,7 @@ import json
 from datetime import datetime, timedelta
 import time
 from alibaba_embedding import create_alibaba_embedding_function
+from ollama_embedding import create_ollama_embedding_function, get_recommended_models, get_model_dimension, OllamaEmbeddingFunction
 from vector_optimization import (
     get_optimized_collection_metadata,
     DEFAULT_OPTIMIZATION_CONFIG,
@@ -36,6 +37,7 @@ import time
 import json
 import asyncio
 from file_parsers import file_parser_manager, FileFormat
+from config_manager import config_manager
 
 # 延迟导入有问题的模块，避免启动时冲突
 def get_rag_chunker():
@@ -143,6 +145,10 @@ class CollectionInfo(BaseModel):
     files_count: Optional[int] = None
     chunk_statistics: Optional[dict] = None
     dimension: Optional[int] = None  # 向量维数
+    embedding_model: Optional[str] = None  # 嵌入模型信息
+    embedding_provider: Optional[str] = None  # 嵌入模型提供商
+    created_at: Optional[str] = None  # 创建时间
+    updated_at: Optional[str] = None  # 更新时间
 
 class DocumentInfo(BaseModel):
     id: str
@@ -164,6 +170,9 @@ class CollectionDetail(BaseModel):
 class CreateCollectionRequest(BaseModel):
     name: str
     metadata: Optional[dict] = {}
+    embedding_model: Optional[str] = None  # 支持 "alibaba" 或 "ollama"，None表示使用配置的默认值
+    ollama_model: Optional[str] = None  # ollama模型名称，None表示使用配置的默认值
+    ollama_base_url: Optional[str] = None  # ollama服务器地址，None表示使用配置的默认值
 
 class RenameCollectionRequest(BaseModel):
     old_name: str
@@ -258,6 +267,16 @@ class AnalyticsRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     period: Optional[str] = "7days"
+
+class EmbeddingConfigRequest(BaseModel):
+    default_provider: str  # "alibaba" 或 "ollama"
+    alibaba_config: Optional[dict] = None
+    ollama_config: Optional[dict] = None
+
+class CollectionMigrationRequest(BaseModel):
+    collection_name: str
+    target_provider: str  # "alibaba" 或 "ollama"
+    target_config: Optional[dict] = None  # 目标模型配置
 
 @app.on_event("startup")
 async def startup_event():
@@ -378,6 +397,52 @@ async def get_collections():
                     logger.warning(f"无法获取集合 '{display_name}' 的向量维度: {e}")
                     dimension = None
 
+            # 解析嵌入模型信息
+            embedding_model_raw = metadata.get('embedding_model', '未知')
+            embedding_provider = None
+            embedding_model = embedding_model_raw
+
+            if embedding_model_raw.startswith('alibaba-'):
+                embedding_provider = 'alibaba'
+                embedding_model = embedding_model_raw.replace('alibaba-', '')
+            elif embedding_model_raw.startswith('ollama-'):
+                embedding_provider = 'ollama'
+                embedding_model = embedding_model_raw.replace('ollama-', '')
+            elif embedding_model_raw == 'alibaba-text-embedding-v4':
+                embedding_provider = 'alibaba'
+                embedding_model = 'text-embedding-v4'
+
+            # 格式化时间信息
+            created_at = metadata.get('created_at')
+            updated_at = metadata.get('updated_at')
+
+            # 为没有时间戳的旧集合提供默认时间
+            if not created_at and not updated_at:
+                # 使用一个默认的创建时间（表示这是旧集合）
+                created_at = "2024-01-01 00:00:00"
+                updated_at = "2024-01-01 00:00:00"
+            elif not created_at:
+                created_at = updated_at  # 如果没有创建时间，使用更新时间
+            elif not updated_at:
+                updated_at = created_at  # 如果没有更新时间，使用创建时间
+
+            # 如果有时间信息，格式化为用户友好的格式
+            if created_at and created_at != "2024-01-01 00:00:00":
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    created_at = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    pass  # 如果解析失败，保持原始格式
+
+            if updated_at and updated_at != "2024-01-01 00:00:00":
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                    updated_at = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    pass  # 如果解析失败，保持原始格式
+
             result.append(CollectionInfo(
                 name=collection.name,  # 原始编码名称
                 display_name=display_name,  # 显示名称（中文）
@@ -385,7 +450,11 @@ async def get_collections():
                 metadata=metadata,
                 files_count=files_count,
                 chunk_statistics=chunk_statistics,
-                dimension=dimension  # 向量维数
+                dimension=dimension,  # 向量维数
+                embedding_model=embedding_model,  # 嵌入模型名称
+                embedding_provider=embedding_provider,  # 嵌入模型提供商
+                created_at=created_at,  # 创建时间
+                updated_at=updated_at   # 更新时间
             ))
 
         return result
@@ -544,30 +613,75 @@ async def create_collection(request: CreateCollectionRequest):
         # 使用优化配置
         optimization_config = HIGH_PRECISION_CONFIG
 
-        # 准备元数据，包含原始中文名称和优化配置
+        # 准备元数据，包含原始中文名称和嵌入模型信息
         base_metadata = request.metadata or {}
         base_metadata['original_name'] = request.name
-        base_metadata['embedding_model'] = 'alibaba-text-embedding-v4'
 
-        # 应用向量优化配置
-        metadata = get_optimized_collection_metadata(optimization_config, base_metadata)
+        # 添加创建时间和更新时间
+        from datetime import datetime
+        current_time = datetime.now().isoformat()
+        base_metadata['created_at'] = current_time
+        base_metadata['updated_at'] = current_time
 
-        # 创建阿里云嵌入函数，使用优化的维度
-        try:
-            alibaba_embedding_func = create_alibaba_embedding_function(dimension=optimization_config.vector_dimension)
-            logger.info(f"成功创建阿里云嵌入函数，维度: {optimization_config.vector_dimension}")
-        except Exception as e:
-            logger.error(f"创建阿里云嵌入函数失败: {e}")
-            raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
+        # 获取嵌入模型配置（优先使用请求参数，否则使用配置的默认值）
+        embedding_provider = request.embedding_model or config_manager.get_default_embedding_provider()
 
-        # 创建集合，使用阿里云嵌入函数和优化的元数据
+        # 根据选择的嵌入模型设置元数据和创建嵌入函数
+        embedding_function = None
+
+        if embedding_provider == "ollama":
+            # 使用Ollama嵌入模型
+            ollama_config = config_manager.get_ollama_config()
+            ollama_model = request.ollama_model or ollama_config.get("model", "mxbai-embed-large")
+            ollama_base_url = request.ollama_base_url or ollama_config.get("base_url", "http://localhost:11434")
+
+            base_metadata['embedding_model'] = f'ollama-{ollama_model}'
+            base_metadata['ollama_base_url'] = ollama_base_url
+
+            try:
+                embedding_function = create_ollama_embedding_function(
+                    model_name=ollama_model,
+                    base_url=ollama_base_url
+                )
+                logger.info(f"成功创建Ollama嵌入函数: 模型={ollama_model}, 服务器={ollama_base_url}")
+            except Exception as e:
+                logger.error(f"创建Ollama嵌入函数失败: {e}")
+                raise HTTPException(status_code=500, detail=f"创建Ollama嵌入函数失败: {str(e)}")
+        else:
+            # 使用阿里云嵌入模型
+            alibaba_config = config_manager.get_alibaba_config()
+            alibaba_model = alibaba_config.get("model", "text-embedding-v4")
+            alibaba_dimension = alibaba_config.get("dimension", 1024)
+
+            base_metadata['embedding_model'] = f'alibaba-{alibaba_model}'
+
+            try:
+                embedding_function = create_alibaba_embedding_function(dimension=alibaba_dimension)
+                logger.info(f"成功创建阿里云嵌入函数: 模型={alibaba_model}, 维度={alibaba_dimension}")
+            except Exception as e:
+                logger.error(f"创建阿里云嵌入函数失败: {e}")
+                raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
+
+        # 应用向量优化配置（仅对阿里云模型）
+        if embedding_provider == "alibaba":
+            metadata = get_optimized_collection_metadata(optimization_config, base_metadata)
+        else:
+            metadata = base_metadata
+
+        # 创建集合，使用选择的嵌入函数和元数据
         collection = chroma_client.create_collection(
             name=encoded_name,
             metadata=metadata,
-            embedding_function=alibaba_embedding_func
+            embedding_function=embedding_function
         )
 
-        logger.info(f"集合创建成功，使用优化配置: 距离度量={optimization_config.distance_metric}, 维度={optimization_config.vector_dimension}")
+        if embedding_provider == "alibaba":
+            alibaba_config = config_manager.get_alibaba_config()
+            logger.info(f"集合创建成功，使用阿里云嵌入模型: {alibaba_config.get('model')}")
+        else:
+            ollama_config = config_manager.get_ollama_config()
+            ollama_model = request.ollama_model or ollama_config.get("model")
+            logger.info(f"集合创建成功，使用Ollama嵌入模型: {ollama_model}")
 
         return {
             "message": f"集合 '{request.name}' 创建成功",
@@ -642,15 +756,37 @@ async def rename_collection(request: RenameCollectionRequest):
         new_metadata = old_collection.metadata.copy() if old_collection.metadata else {}
         new_metadata['original_name'] = request.new_name
 
+        # 更新修改时间，保留原创建时间
+        from datetime import datetime
+        new_metadata['updated_at'] = datetime.now().isoformat()
+        # 如果没有创建时间，添加当前时间作为创建时间
+        if 'created_at' not in new_metadata:
+            new_metadata['created_at'] = new_metadata['updated_at']
+
         # ChromaDB不支持直接重命名，需要创建新集合并复制数据
-        # 检查原集合是否使用阿里云嵌入模型
+        # 检查原集合使用的嵌入模型
         embedding_function = None
-        if new_metadata.get('embedding_model') == 'alibaba-text-embedding-v4':
+        embedding_model = new_metadata.get('embedding_model')
+
+        if embedding_model == 'alibaba-text-embedding-v4':
             try:
                 embedding_function = create_alibaba_embedding_function(dimension=1024)
                 logger.info(f"为重命名集合创建阿里云嵌入函数")
             except Exception as e:
                 logger.warning(f"创建阿里云嵌入函数失败，使用默认函数: {e}")
+
+        elif embedding_model and embedding_model.startswith('ollama-'):
+            try:
+                ollama_model = embedding_model.replace('ollama-', '')
+                ollama_base_url = new_metadata.get('ollama_base_url', 'http://localhost:11434')
+
+                embedding_function = create_ollama_embedding_function(
+                    model_name=ollama_model,
+                    base_url=ollama_base_url
+                )
+                logger.info(f"为重命名集合创建Ollama嵌入函数: {ollama_model}")
+            except Exception as e:
+                logger.warning(f"创建Ollama嵌入函数失败，使用默认函数: {e}")
 
         # 创建新集合
         if embedding_function:
@@ -713,9 +849,10 @@ async def add_documents(collection_name: str, request: AddDocumentRequest):
         if not target_collection:
             raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
 
-        # 检查集合是否使用阿里云嵌入模型
+        # 检查集合使用的嵌入模型
         collection_metadata = target_collection.metadata or {}
         embedding_model = collection_metadata.get('embedding_model')
+        embeddings = None
 
         if embedding_model == 'alibaba-text-embedding-v4':
             # 重新创建阿里云嵌入函数
@@ -730,9 +867,29 @@ async def add_documents(collection_name: str, request: AddDocumentRequest):
             except Exception as e:
                 logger.error(f"创建阿里云嵌入函数失败: {e}")
                 raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
+
+        elif embedding_model and embedding_model.startswith('ollama-'):
+            # 使用Ollama嵌入模型
+            try:
+                ollama_model = embedding_model.replace('ollama-', '')
+                ollama_base_url = collection_metadata.get('ollama_base_url', 'http://localhost:11434')
+
+                ollama_embedding_func = create_ollama_embedding_function(
+                    model_name=ollama_model,
+                    base_url=ollama_base_url
+                )
+                logger.info(f"为集合 '{collection_name}' 重新创建Ollama嵌入函数: {ollama_model}")
+
+                # 使用Ollama嵌入函数生成向量
+                embeddings = ollama_embedding_func(request.documents)
+                logger.info(f"成功生成 {len(embeddings)} 个嵌入向量，维度: {len(embeddings[0]) if embeddings else 0}")
+
+            except Exception as e:
+                logger.error(f"创建Ollama嵌入函数失败: {e}")
+                raise HTTPException(status_code=500, detail=f"创建Ollama嵌入函数失败: {str(e)}")
+
         else:
             # 使用默认嵌入函数
-            embeddings = None
             logger.info(f"集合 '{collection_name}' 使用默认嵌入函数")
 
         # 准备文档数据
@@ -949,9 +1106,10 @@ async def upload_document(
                 chunk_id = f"{file.filename}_{chunk.index}_{str(uuid.uuid4())[:8]}"
                 ids.append(chunk_id)
 
-        # 检查集合是否使用阿里云嵌入模型
+        # 检查集合使用的嵌入模型
         collection_metadata = target_collection.metadata or {}
         embedding_model = collection_metadata.get('embedding_model')
+        embeddings = None
 
         if embedding_model == 'alibaba-text-embedding-v4':
             # 重新创建阿里云嵌入函数
@@ -980,9 +1138,43 @@ async def upload_document(
             except Exception as e:
                 logger.error(f"创建阿里云嵌入函数失败: {e}")
                 raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
+
+        elif embedding_model and embedding_model.startswith('ollama-'):
+            # 使用Ollama嵌入模型
+            try:
+                ollama_model = embedding_model.replace('ollama-', '')
+                ollama_base_url = collection_metadata.get('ollama_base_url', 'http://localhost:11434')
+
+                ollama_embedding_func = create_ollama_embedding_function(
+                    model_name=ollama_model,
+                    base_url=ollama_base_url
+                )
+                logger.info(f"为集合 '{collection_name}' 重新创建Ollama嵌入函数: {ollama_model}")
+
+                # 使用Ollama嵌入函数生成向量，支持批量处理
+                embeddings = []
+                batch_size = 5  # Ollama批量处理限制
+
+                for i in range(0, len(documents), batch_size):
+                    batch = documents[i:i + batch_size]
+                    logger.info(f"处理文档批次 {i//batch_size + 1}: {len(batch)} 个文档")
+
+                    try:
+                        batch_embeddings = ollama_embedding_func(batch)
+                        embeddings.extend(batch_embeddings)
+                        logger.info(f"成功生成批次 {i//batch_size + 1} 的嵌入向量")
+                    except Exception as e:
+                        logger.error(f"批次 {i//batch_size + 1} 嵌入向量生成失败: {e}")
+                        raise e
+
+                logger.info(f"成功生成 {len(embeddings)} 个嵌入向量，维度: {len(embeddings[0]) if embeddings else 0}")
+
+            except Exception as e:
+                logger.error(f"创建Ollama嵌入函数失败: {e}")
+                raise HTTPException(status_code=500, detail=f"创建Ollama嵌入函数失败: {str(e)}")
+
         else:
             # 使用默认嵌入函数
-            embeddings = None
             logger.info(f"集合 '{collection_name}' 使用默认嵌入函数")
 
         # 添加到ChromaDB
@@ -1249,6 +1441,22 @@ async def query_collections(request: QueryRequest):
                 query_embeddings = alibaba_embedding_func([request.query])
                 query_embedding = query_embeddings[0]
                 logger.info(f"使用阿里云嵌入模型生成查询向量，维度: {len(query_embedding)}")
+            except Exception as e:
+                logger.error(f"生成查询向量失败: {e}")
+                raise HTTPException(status_code=500, detail=f"生成查询向量失败: {str(e)}")
+
+        elif embedding_model and embedding_model.startswith('ollama-'):
+            try:
+                ollama_model = embedding_model.replace('ollama-', '')
+                ollama_base_url = collection_metadata.get('ollama_base_url', 'http://localhost:11434')
+
+                ollama_embedding_func = create_ollama_embedding_function(
+                    model_name=ollama_model,
+                    base_url=ollama_base_url
+                )
+                query_embeddings = ollama_embedding_func([request.query])
+                query_embedding = query_embeddings[0]
+                logger.info(f"使用Ollama嵌入模型生成查询向量: {ollama_model}，维度: {len(query_embedding)}")
             except Exception as e:
                 logger.error(f"生成查询向量失败: {e}")
                 raise HTTPException(status_code=500, detail=f"生成查询向量失败: {str(e)}")
@@ -1668,6 +1876,199 @@ async def get_analytics_data(
     except Exception as e:
         logger.error(f"获取分析数据失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取分析数据失败: {str(e)}")
+
+@app.get("/api/embedding-models")
+async def get_embedding_models():
+    """获取支持的嵌入模型列表"""
+    try:
+        # 获取推荐的Ollama模型
+        recommended_models = get_recommended_models()
+
+        # 获取Ollama服务配置
+        ollama_config = config_manager.get_ollama_config()
+        ollama_base_url = ollama_config.get("base_url", "http://localhost:11434")
+
+        # 检查Ollama服务是否可用并获取实际可用的模型
+        ollama_result = OllamaEmbeddingFunction.get_available_models(ollama_base_url)
+
+        if ollama_result["success"]:
+            # 合并推荐模型和实际可用模型
+            available_embedding_models = ollama_result["embedding_models"]
+
+            # 为推荐模型添加可用状态
+            for model in recommended_models:
+                model['available'] = any(
+                    available['name'].startswith(model['name'])
+                    for available in available_embedding_models
+                )
+
+            # 添加实际可用但不在推荐列表中的模型
+            for available_model in available_embedding_models:
+                model_name = available_model['name']
+                base_name = model_name.split(':')[0]
+
+                # 检查是否已在推荐列表中
+                if not any(rec['name'] == base_name for rec in recommended_models):
+                    recommended_models.append({
+                        "name": model_name,
+                        "description": f"可用的嵌入模型",
+                        "dimension": None,  # 未知维度
+                        "recommended": False,
+                        "available": True
+                    })
+
+        return {
+            "alibaba": {
+                "name": "阿里云百炼",
+                "description": "阿里云百炼平台嵌入模型",
+                "models": [
+                    {
+                        "name": "text-embedding-v4",
+                        "description": "高质量嵌入模型，支持多种维度",
+                        "dimension": 1024,
+                        "available": True,
+                        "recommended": True
+                    }
+                ],
+                "available": True
+            },
+            "ollama": {
+                "name": "Ollama本地模型",
+                "description": "本地运行的Ollama嵌入模型",
+                "models": recommended_models,
+                "available": ollama_result["success"],
+                "service_url": ollama_base_url,
+                "available_models": ollama_result.get("embedding_models", []),
+                "error": ollama_result.get("error") if not ollama_result["success"] else None
+            }
+        }
+    except Exception as e:
+        logger.error(f"获取嵌入模型列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取嵌入模型列表失败: {str(e)}")
+
+@app.get("/api/embedding-config")
+async def get_embedding_config():
+    """获取当前嵌入模型配置"""
+    try:
+        current_config = config_manager.get_current_embedding_config()
+        embedding_config = config_manager.get_embedding_config()
+
+        return {
+            "current": current_config,
+            "full_config": embedding_config
+        }
+    except Exception as e:
+        logger.error(f"获取嵌入模型配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取嵌入模型配置失败: {str(e)}")
+
+@app.post("/api/embedding-config")
+async def set_embedding_config(request: EmbeddingConfigRequest):
+    """设置嵌入模型配置"""
+    try:
+        # 验证提供商
+        if request.default_provider not in ["alibaba", "ollama"]:
+            raise HTTPException(status_code=400, detail="不支持的嵌入模型提供商")
+
+        # 构建配置更新
+        config_update = {
+            "default_provider": request.default_provider
+        }
+
+        if request.alibaba_config:
+            config_update["alibaba"] = request.alibaba_config
+
+        if request.ollama_config:
+            # 验证Ollama配置
+            ollama_model = request.ollama_config.get("model")
+            ollama_base_url = request.ollama_config.get("base_url", "http://localhost:11434")
+
+            if ollama_model:
+                # 测试Ollama模型是否可用
+                try:
+                    test_embedding_func = create_ollama_embedding_function(
+                        model_name=ollama_model,
+                        base_url=ollama_base_url
+                    )
+                    # 简单测试
+                    test_embedding_func(["测试"])
+                    logger.info(f"Ollama模型 {ollama_model} 测试成功")
+                except Exception as e:
+                    logger.warning(f"Ollama模型 {ollama_model} 测试失败: {e}")
+                    # 不阻止配置保存，只是警告
+
+            config_update["ollama"] = request.ollama_config
+
+        # 保存配置
+        if config_manager.set_embedding_config(config_update):
+            return {
+                "message": "嵌入模型配置已更新",
+                "config": config_manager.get_current_embedding_config()
+            }
+        else:
+            raise HTTPException(status_code=500, detail="保存配置失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"设置嵌入模型配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"设置嵌入模型配置失败: {str(e)}")
+
+@app.post("/api/embedding-config/test")
+async def test_embedding_config(request: dict):
+    """测试嵌入模型配置"""
+    try:
+        provider = request.get("provider")
+        config = request.get("config", {})
+
+        if provider == "ollama":
+            model_name = config.get("model", "mxbai-embed-large")
+            base_url = config.get("base_url", "http://localhost:11434")
+
+            # 创建测试嵌入函数
+            embedding_func = create_ollama_embedding_function(
+                model_name=model_name,
+                base_url=base_url
+            )
+
+            # 执行测试
+            test_text = "这是一个测试文本"
+            embeddings = embedding_func([test_text])
+
+            return {
+                "success": True,
+                "message": f"Ollama模型 {model_name} 测试成功",
+                "model_name": model_name,
+                "vector_dimension": len(embeddings[0]) if embeddings else 0,
+                "test_text": test_text
+            }
+
+        elif provider == "alibaba":
+            dimension = config.get("dimension", 1024)
+
+            # 创建测试嵌入函数
+            embedding_func = create_alibaba_embedding_function(dimension=dimension)
+
+            # 执行测试
+            test_text = "这是一个测试文本"
+            embeddings = embedding_func([test_text])
+
+            return {
+                "success": True,
+                "message": f"阿里云嵌入模型测试成功",
+                "vector_dimension": len(embeddings[0]) if embeddings else 0,
+                "test_text": test_text
+            }
+        else:
+            raise HTTPException(status_code=400, detail="不支持的嵌入模型提供商")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"测试嵌入模型配置失败: {e}")
+        return {
+            "success": False,
+            "message": f"测试失败: {str(e)}"
+        }
 
 if __name__ == "__main__":
     uvicorn.run(

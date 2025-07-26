@@ -3,6 +3,18 @@
   "path_history": [
     "/Users/lihongwen/Projects/chromadb/chromadb-web-manager/chroma_data"
   ],
-  "last_updated": "2025-07-26T14:11:09.117828",
-  "max_history_count": 10
+  "last_updated": "2025-07-26T23:42:57.770434",
+  "max_history_count": 10,
+  "embedding_config": {
+    "default_provider": "ollama",
+    "alibaba": {
+      "model": "text-embedding-v4",
+      "dimension": 1024
+    },
+    "ollama": {
+      "model": "snowflake-arctic-embed:335m",
+      "base_url": "http://localhost:11434",
+      "timeout": 60
+    }
+  }
 }

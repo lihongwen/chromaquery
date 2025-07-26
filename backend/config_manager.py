@@ -28,7 +28,20 @@ class ConfigManager:
             "chroma_db_path": str(self.default_chroma_path),
             "path_history": [str(self.default_chroma_path)],
             "last_updated": datetime.now().isoformat(),
-            "max_history_count": 10
+            "max_history_count": 10,
+            # 嵌入模型配置
+            "embedding_config": {
+                "default_provider": "alibaba",  # "alibaba" 或 "ollama"
+                "alibaba": {
+                    "model": "text-embedding-v4",
+                    "dimension": 1024
+                },
+                "ollama": {
+                    "model": "mxbai-embed-large",
+                    "base_url": "http://localhost:11434",
+                    "timeout": 60
+                }
+            }
         }
         
         if self.config_file.exists():
@@ -242,6 +255,84 @@ class ConfigManager:
             return round(total_size / (1024 * 1024), 2)
         except Exception:
             return 0
+
+    # 嵌入模型配置管理方法
+    def get_embedding_config(self) -> Dict:
+        """获取嵌入模型配置"""
+        return self._config.get("embedding_config", {})
+
+    def set_embedding_config(self, config: Dict) -> bool:
+        """设置嵌入模型配置"""
+        try:
+            if "embedding_config" not in self._config:
+                self._config["embedding_config"] = {}
+
+            # 更新配置
+            self._config["embedding_config"].update(config)
+
+            # 保存配置
+            if self._save_config():
+                logger.info(f"嵌入模型配置已更新: {config}")
+                return True
+            else:
+                return False
+        except Exception as e:
+            logger.error(f"设置嵌入模型配置失败: {e}")
+            return False
+
+    def get_default_embedding_provider(self) -> str:
+        """获取默认嵌入模型提供商"""
+        embedding_config = self.get_embedding_config()
+        return embedding_config.get("default_provider", "alibaba")
+
+    def set_default_embedding_provider(self, provider: str) -> bool:
+        """设置默认嵌入模型提供商"""
+        if provider not in ["alibaba", "ollama"]:
+            logger.error(f"不支持的嵌入模型提供商: {provider}")
+            return False
+
+        return self.set_embedding_config({"default_provider": provider})
+
+    def get_alibaba_config(self) -> Dict:
+        """获取阿里云嵌入模型配置"""
+        embedding_config = self.get_embedding_config()
+        return embedding_config.get("alibaba", {
+            "model": "text-embedding-v4",
+            "dimension": 1024
+        })
+
+    def set_alibaba_config(self, config: Dict) -> bool:
+        """设置阿里云嵌入模型配置"""
+        return self.set_embedding_config({"alibaba": config})
+
+    def get_ollama_config(self) -> Dict:
+        """获取Ollama嵌入模型配置"""
+        embedding_config = self.get_embedding_config()
+        return embedding_config.get("ollama", {
+            "model": "mxbai-embed-large",
+            "base_url": "http://localhost:11434",
+            "timeout": 60
+        })
+
+    def set_ollama_config(self, config: Dict) -> bool:
+        """设置Ollama嵌入模型配置"""
+        return self.set_embedding_config({"ollama": config})
+
+    def get_current_embedding_config(self) -> Dict:
+        """获取当前使用的嵌入模型配置"""
+        provider = self.get_default_embedding_provider()
+        embedding_config = self.get_embedding_config()
+
+        if provider == "ollama":
+            return {
+                "provider": "ollama",
+                "config": self.get_ollama_config()
+            }
+        else:
+            return {
+                "provider": "alibaba",
+                "config": self.get_alibaba_config()
+            }
 
 # 全局配置管理器实例
 config_manager = ConfigManager()

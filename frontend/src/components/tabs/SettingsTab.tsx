@@ -1,34 +1,45 @@
-import React, { useState } from 'react';
-import { 
-  Layout, 
-  Menu, 
-  Card, 
-  Form, 
-  Input, 
-  InputNumber, 
-  Button, 
-  Space, 
-  Radio, 
-  Switch, 
-  Divider, 
+import React, { useState, useEffect } from 'react';
+import {
+  Layout,
+  Menu,
+  Card,
+  Form,
+  Input,
+  InputNumber,
+  Button,
+  Space,
+  Radio,
+  Switch,
+  Divider,
   Typography,
   message,
   Row,
   Col,
   Select,
   Slider,
-  Alert
+  Alert,
+  Spin,
+  Tag,
+  List,
+  Badge,
+  Tooltip
 } from 'antd';
-import { 
-  LinkOutlined, 
-  BgColorsOutlined, 
-  BellOutlined, 
-  SafetyOutlined, 
-  SettingOutlined, 
+import {
+  LinkOutlined,
+  BgColorsOutlined,
+  BellOutlined,
+  SafetyOutlined,
+  SettingOutlined,
   InfoCircleOutlined,
   CheckCircleOutlined,
-  ExclamationCircleOutlined
+  ExclamationCircleOutlined,
+  RobotOutlined,
+  CloudOutlined,
+  DesktopOutlined,
+  ReloadOutlined,
+  PlayCircleOutlined
 } from '@ant-design/icons';
+import axios from 'axios';
 import { useTheme } from '../../contexts/ThemeContext';
 import type { MenuProps } from 'antd';
 
@@ -36,7 +47,7 @@ const { Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 
-type SettingSection = 'connection' | 'theme' | 'notifications' | 'security' | 'advanced' | 'about';
+type SettingSection = 'connection' | 'models' | 'theme' | 'notifications' | 'security' | 'advanced' | 'about';
 
 interface ConnectionConfig {
   serverUrl: string;
@@ -50,6 +61,36 @@ interface NotificationConfig {
   enableEmail: boolean;
   enableQueryAlerts: boolean;
   enableSystemAlerts: boolean;
+}
+
+interface EmbeddingModel {
+  name: string;
+  description: string;
+  dimension?: number;
+  recommended: boolean;
+  available: boolean;
+}
+
+interface EmbeddingProvider {
+  name: string;
+  description: string;
+  models: EmbeddingModel[];
+  available: boolean;
+  service_url?: string;
+  error?: string;
+}
+
+interface EmbeddingConfig {
+  default_provider: string;
+  alibaba_config?: {
+    model: string;
+    dimension: number;
+  };
+  ollama_config?: {
+    model: string;
+    base_url: string;
+    timeout: number;
+  };
 }
 
 
@@ -69,7 +110,34 @@ const SettingsTab: React.FC = () => {
   });
   const [connectionTesting, setConnectionTesting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'success' | 'error' | null>(null);
+
+  // 模型设置相关状态
+  const [embeddingProviders, setEmbeddingProviders] = useState<Record<string, EmbeddingProvider>>({});
+  const [embeddingConfig, setEmbeddingConfig] = useState<EmbeddingConfig>({
+    default_provider: 'alibaba',
+    alibaba_config: {
+      model: 'text-embedding-v4',
+      dimension: 1024
+    },
+    ollama_config: {
+      model: 'mxbai-embed-large',
+      base_url: 'http://localhost:11434',
+      timeout: 60
+    }
+  });
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelTesting, setModelTesting] = useState(false);
+  const [modelTestResult, setModelTestResult] = useState<{success: boolean; message: string} | null>(null);
+
   const { theme, toggleTheme } = useTheme();
+
+  // 组件加载时初始化数据
+  useEffect(() => {
+    if (selectedSection === 'models') {
+      loadEmbeddingModels();
+      loadEmbeddingConfig();
+    }
+  }, []);
 
   const menuItems: MenuProps['items'] = [
     {
@@ -77,7 +145,11 @@ const SettingsTab: React.FC = () => {
       icon: <LinkOutlined />,
       label: '连接设置',
     },
-
+    {
+      key: 'models',
+      icon: <RobotOutlined />,
+      label: '模型设置',
+    },
     {
       key: 'theme',
       icon: <BgColorsOutlined />,
@@ -107,6 +179,82 @@ const SettingsTab: React.FC = () => {
 
   const handleMenuClick: MenuProps['onClick'] = ({ key }) => {
     setSelectedSection(key as SettingSection);
+    // 当切换到模型设置时，加载模型数据
+    if (key === 'models') {
+      loadEmbeddingModels();
+      loadEmbeddingConfig();
+    }
+  };
+
+  // 加载嵌入模型列表
+  const loadEmbeddingModels = async () => {
+    setModelsLoading(true);
+    try {
+      const response = await axios.get('/api/embedding-models');
+      setEmbeddingProviders(response.data);
+    } catch (error) {
+      console.error('加载模型列表失败:', error);
+      message.error('加载模型列表失败');
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
+  // 加载嵌入模型配置
+  const loadEmbeddingConfig = async () => {
+    try {
+      const response = await axios.get('/api/embedding-config');
+      if (response.data.current) {
+        setEmbeddingConfig(response.data.full_config);
+      }
+    } catch (error) {
+      console.error('加载模型配置失败:', error);
+      message.error('加载模型配置失败');
+    }
+  };
+
+  // 保存嵌入模型配置
+  const saveEmbeddingConfig = async () => {
+    try {
+      await axios.post('/api/embedding-config', embeddingConfig);
+      message.success('模型配置已保存');
+    } catch (error) {
+      console.error('保存模型配置失败:', error);
+      message.error('保存模型配置失败');
+    }
+  };
+
+  // 测试嵌入模型配置
+  const testEmbeddingConfig = async (provider: string) => {
+    setModelTesting(true);
+    setModelTestResult(null);
+
+    try {
+      const config = provider === 'ollama' ? embeddingConfig.ollama_config : embeddingConfig.alibaba_config;
+      const response = await axios.post('/api/embedding-config/test', {
+        provider,
+        config
+      });
+
+      setModelTestResult({
+        success: response.data.success,
+        message: response.data.message
+      });
+
+      if (response.data.success) {
+        message.success('模型测试成功！');
+      } else {
+        message.error('模型测试失败');
+      }
+    } catch (error) {
+      setModelTestResult({
+        success: false,
+        message: '测试请求失败'
+      });
+      message.error('模型测试失败');
+    } finally {
+      setModelTesting(false);
+    }
   };
 
   const handleTestConnection = async () => {
@@ -148,6 +296,251 @@ const SettingsTab: React.FC = () => {
 
 
 
+
+  // 渲染模型设置
+  const renderModelSettings = () => (
+    <div>
+      <Card title="🤖 嵌入模型设置" style={{ marginBottom: 16 }}>
+        <Spin spinning={modelsLoading}>
+          <Form layout="vertical">
+            <Form.Item label="默认嵌入模型提供商">
+              <Radio.Group
+                value={embeddingConfig.default_provider}
+                onChange={(e) => setEmbeddingConfig(prev => ({ ...prev, default_provider: e.target.value }))}
+              >
+                <Radio.Button value="alibaba">
+                  <CloudOutlined /> 阿里云百炼
+                </Radio.Button>
+                <Radio.Button value="ollama">
+                  <DesktopOutlined /> Ollama本地模型
+                </Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+
+            {modelTestResult && (
+              <Alert
+                message={modelTestResult.success ? '测试成功' : '测试失败'}
+                description={modelTestResult.message}
+                type={modelTestResult.success ? 'success' : 'error'}
+                style={{ marginBottom: 16 }}
+                closable
+                onClose={() => setModelTestResult(null)}
+              />
+            )}
+
+            <Form.Item>
+              <Space>
+                <Button
+                  type="primary"
+                  onClick={saveEmbeddingConfig}
+                >
+                  保存配置
+                </Button>
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={() => {
+                    loadEmbeddingModels();
+                    loadEmbeddingConfig();
+                  }}
+                >
+                  刷新
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+        </Spin>
+      </Card>
+
+      {/* 阿里云模型配置 */}
+      <Card
+        title={
+          <Space>
+            <CloudOutlined />
+            阿里云百炼模型配置
+            <Badge
+              status={embeddingProviders.alibaba?.available ? 'success' : 'error'}
+              text={embeddingProviders.alibaba?.available ? '可用' : '不可用'}
+            />
+          </Space>
+        }
+        style={{ marginBottom: 16 }}
+      >
+        <Form layout="vertical">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="模型名称">
+                <Select
+                  value={embeddingConfig.alibaba_config?.model}
+                  onChange={(value) => setEmbeddingConfig(prev => ({
+                    ...prev,
+                    alibaba_config: { ...prev.alibaba_config!, model: value }
+                  }))}
+                  style={{ width: '100%' }}
+                >
+                  {embeddingProviders.alibaba?.models?.map(model => (
+                    <Select.Option key={model.name} value={model.name}>
+                      <Space>
+                        {model.name}
+                        {model.recommended && <Tag color="blue">推荐</Tag>}
+                      </Space>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="向量维度">
+                <InputNumber
+                  value={embeddingConfig.alibaba_config?.dimension}
+                  onChange={(value) => setEmbeddingConfig(prev => ({
+                    ...prev,
+                    alibaba_config: { ...prev.alibaba_config!, dimension: value || 1024 }
+                  }))}
+                  min={64}
+                  max={2048}
+                  step={64}
+                  style={{ width: '100%' }}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item>
+            <Button
+              icon={<PlayCircleOutlined />}
+              loading={modelTesting}
+              onClick={() => testEmbeddingConfig('alibaba')}
+            >
+              测试阿里云模型
+            </Button>
+          </Form.Item>
+        </Form>
+      </Card>
+
+      {/* Ollama模型配置 */}
+      <Card
+        title={
+          <Space>
+            <DesktopOutlined />
+            Ollama本地模型配置
+            <Badge
+              status={embeddingProviders.ollama?.available ? 'success' : 'error'}
+              text={embeddingProviders.ollama?.available ? '可用' : '不可用'}
+            />
+          </Space>
+        }
+        style={{ marginBottom: 16 }}
+      >
+        {!embeddingProviders.ollama?.available && embeddingProviders.ollama?.error && (
+          <Alert
+            message="Ollama服务不可用"
+            description={embeddingProviders.ollama.error}
+            type="warning"
+            style={{ marginBottom: 16 }}
+          />
+        )}
+
+        <Form layout="vertical">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="模型名称">
+                <Select
+                  value={embeddingConfig.ollama_config?.model}
+                  onChange={(value) => setEmbeddingConfig(prev => ({
+                    ...prev,
+                    ollama_config: { ...prev.ollama_config!, model: value }
+                  }))}
+                  style={{ width: '100%' }}
+                  showSearch
+                  placeholder="选择或输入模型名称"
+                  optionFilterProp="children"
+                  mode="combobox"
+                >
+                  {embeddingProviders.ollama?.models?.map(model => (
+                    <Select.Option key={model.name} value={model.name}>
+                      <Space>
+                        {model.name}
+                        {model.recommended && <Tag color="blue">推荐</Tag>}
+                        {model.available && <Tag color="green">已安装</Tag>}
+                      </Space>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="服务器地址">
+                <Input
+                  value={embeddingConfig.ollama_config?.base_url}
+                  onChange={(e) => setEmbeddingConfig(prev => ({
+                    ...prev,
+                    ollama_config: { ...prev.ollama_config!, base_url: e.target.value }
+                  }))}
+                  placeholder="http://localhost:11434"
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item label="请求超时时间">
+            <InputNumber
+              value={embeddingConfig.ollama_config?.timeout}
+              onChange={(value) => setEmbeddingConfig(prev => ({
+                ...prev,
+                ollama_config: { ...prev.ollama_config!, timeout: value || 60 }
+              }))}
+              min={10}
+              max={300}
+              addonAfter="秒"
+              style={{ width: 200 }}
+            />
+          </Form.Item>
+
+          <Form.Item>
+            <Button
+              icon={<PlayCircleOutlined />}
+              loading={modelTesting}
+              onClick={() => testEmbeddingConfig('ollama')}
+              disabled={!embeddingProviders.ollama?.available}
+            >
+              测试Ollama模型
+            </Button>
+          </Form.Item>
+        </Form>
+      </Card>
+
+      {/* 可用模型列表 */}
+      {embeddingProviders.ollama?.available && embeddingProviders.ollama.available_models && (
+        <Card title="📋 可用的Ollama嵌入模型" style={{ marginBottom: 16 }}>
+          <List
+            dataSource={embeddingProviders.ollama.available_models}
+            renderItem={(model: any) => (
+              <List.Item>
+                <List.Item.Meta
+                  title={
+                    <Space>
+                      {model.name}
+                      <Tag color="green">已安装</Tag>
+                    </Space>
+                  }
+                  description={`大小: ${(model.size / 1024 / 1024 / 1024).toFixed(2)} GB`}
+                />
+                <Button
+                  size="small"
+                  onClick={() => setEmbeddingConfig(prev => ({
+                    ...prev,
+                    ollama_config: { ...prev.ollama_config!, model: model.name }
+                  }))}
+                >
+                  使用此模型
+                </Button>
+              </List.Item>
+            )}
+          />
+        </Card>
+      )}
+    </div>
+  );
 
   const renderConnectionSettings = () => (
     <Card title="🔗 ChromaDB连接设置">
@@ -462,7 +855,8 @@ const SettingsTab: React.FC = () => {
     switch (selectedSection) {
       case 'connection':
         return renderConnectionSettings();
-
+      case 'models':
+        return renderModelSettings();
       case 'theme':
         return renderThemeSettings();
       case 'notifications':

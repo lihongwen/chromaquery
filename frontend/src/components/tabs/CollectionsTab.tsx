@@ -55,6 +55,8 @@ interface CollectionInfo {
   created_at?: string;
   updated_at?: string;
   dimension?: number;
+  embedding_model?: string;
+  embedding_provider?: string;
 }
 
 const CollectionsTab: React.FC = () => {
@@ -86,10 +88,18 @@ const CollectionsTab: React.FC = () => {
   const [importForm] = Form.useForm();
   const [settingsForm] = Form.useForm();
 
+  // 嵌入模型相关状态
+  const [embeddingProviders, setEmbeddingProviders] = useState<any>({});
+  const [embeddingConfig, setEmbeddingConfig] = useState<any>({});
+  const [modelsLoading, setModelsLoading] = useState(false);
+
   useEffect(() => {
     fetchCollections();
     // 从localStorage加载收藏的集合
     loadFavoriteCollections();
+    // 加载嵌入模型数据
+    loadEmbeddingModels();
+    loadEmbeddingConfig();
   }, []);
 
   // 视图模式切换时调整分页大小
@@ -149,6 +159,33 @@ const CollectionsTab: React.FC = () => {
     }
   };
 
+  // 加载嵌入模型列表
+  const loadEmbeddingModels = async () => {
+    setModelsLoading(true);
+    try {
+      const response = await fetch('/api/embedding-models');
+      const data = await response.json();
+      setEmbeddingProviders(data);
+    } catch (error) {
+      console.error('加载模型列表失败:', error);
+      message.error('加载模型列表失败');
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
+  // 加载嵌入模型配置
+  const loadEmbeddingConfig = async () => {
+    try {
+      const response = await fetch('/api/embedding-config');
+      const data = await response.json();
+      setEmbeddingConfig(data.full_config || {});
+    } catch (error) {
+      console.error('加载模型配置失败:', error);
+      message.error('加载模型配置失败');
+    }
+  };
+
   const handleCollectionClick = (collectionName: string) => {
     setSelectedCollection(collectionName);
   };
@@ -175,9 +212,25 @@ const CollectionsTab: React.FC = () => {
   };
 
   // 创建集合
-  const createCollection = async (values: { name: string }) => {
+  const createCollection = async (values: any) => {
     try {
-      await api.collections.create(values);
+      // 构建创建集合的参数
+      const createParams: any = {
+        name: values.name,
+        metadata: values.metadata || {}
+      };
+
+      // 如果用户选择了特定的嵌入模型，添加相关参数
+      if (values.embedding_model && values.embedding_model !== 'default') {
+        createParams.embedding_model = values.embedding_model;
+
+        if (values.embedding_model === 'ollama' && values.ollama_model) {
+          createParams.ollama_model = values.ollama_model;
+          createParams.ollama_base_url = values.ollama_base_url || 'http://localhost:11434';
+        }
+      }
+
+      await api.collections.create(createParams);
       message.success(`集合 "${values.name}" 创建成功`);
       setCreateModalVisible(false);
       createForm.resetFields();
@@ -598,9 +651,24 @@ const CollectionsTab: React.FC = () => {
                       value={collection.count}
                       valueStyle={{ fontSize: '18px' }}
                     />
-                    <Tag color="blue">{collection.dimension || collection.metadata?.vector_dimension || 'N/A'}维</Tag>
+                    <div>
+                      <Tag color="blue">{collection.dimension || collection.metadata?.vector_dimension || 'N/A'}维</Tag>
+                      {collection.embedding_provider && collection.embedding_model && (
+                        <Tag
+                          color={collection.embedding_provider === 'alibaba' ? 'blue' : 'green'}
+                          style={{ marginLeft: 4 }}
+                        >
+                          {collection.embedding_provider === 'alibaba' ? '阿里云' : 'Ollama'}
+                        </Tag>
+                      )}
+                    </div>
+                    {collection.embedding_model && (
+                      <Text type="secondary" style={{ fontSize: '11px' }}>
+                        模型: {collection.embedding_model}
+                      </Text>
+                    )}
                     <Text type="secondary" style={{ fontSize: '12px' }}>
-                      {collection.updated_at || '未知时间'}
+                      {collection.created_at || '未知时间'}
                     </Text>
                   </Space>
                 </Card>
@@ -664,9 +732,37 @@ const CollectionsTab: React.FC = () => {
                 )
               },
               {
+                title: '嵌入模型',
+                key: 'embedding_model',
+                width: 180,
+                align: 'center',
+                render: (_, record) => {
+                  const provider = record.embedding_provider;
+                  const model = record.embedding_model;
+
+                  if (!provider || !model) {
+                    return <Tag color="default">未知模型</Tag>;
+                  }
+
+                  const providerColor = provider === 'alibaba' ? 'blue' : 'green';
+                  const providerName = provider === 'alibaba' ? '阿里云' : 'Ollama';
+
+                  return (
+                    <Space direction="vertical" size={2}>
+                      <Tag color={providerColor} style={{ margin: 0 }}>
+                        {providerName}
+                      </Tag>
+                      <Text style={{ fontSize: '12px', color: '#666' }}>
+                        {model}
+                      </Text>
+                    </Space>
+                  );
+                }
+              },
+              {
                 title: '创建时间',
-                dataIndex: 'updated_at',
-                key: 'updated_at',
+                dataIndex: 'created_at',
+                key: 'created_at',
                 width: 150,
                 render: (time) => (
                   <Text type="secondary">
@@ -816,6 +912,89 @@ const CollectionsTab: React.FC = () => {
             <Input
               placeholder="请输入集合名称（支持中文）"
               style={{ height: '40px' }}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="嵌入模型"
+            name="embedding_model"
+            initialValue="default"
+            tooltip="选择用于生成文档向量的嵌入模型"
+          >
+            <Select
+              placeholder="选择嵌入模型"
+              style={{ height: '40px' }}
+              loading={modelsLoading}
+            >
+              <Select.Option value="default">使用系统默认配置</Select.Option>
+              <Select.Option value="alibaba">阿里云百炼模型</Select.Option>
+              {embeddingProviders.ollama?.available && (
+                <Select.Option value="ollama">Ollama本地模型</Select.Option>
+              )}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) =>
+              prevValues.embedding_model !== currentValues.embedding_model
+            }
+          >
+            {({ getFieldValue }) => {
+              const embeddingModel = getFieldValue('embedding_model');
+
+              if (embeddingModel === 'ollama') {
+                return (
+                  <>
+                    <Form.Item
+                      label="Ollama模型"
+                      name="ollama_model"
+                      rules={[{ required: true, message: '请选择Ollama模型' }]}
+                    >
+                      <Select
+                        placeholder="选择或输入模型名称"
+                        style={{ height: '40px' }}
+                        showSearch
+                        mode="combobox"
+                        optionFilterProp="children"
+                      >
+                        {embeddingProviders.ollama?.models?.map((model: any) => (
+                          <Select.Option key={model.name} value={model.name}>
+                            <Space>
+                              {model.name}
+                              {model.recommended && <Tag color="blue" size="small">推荐</Tag>}
+                              {model.available && <Tag color="green" size="small">已安装</Tag>}
+                            </Space>
+                          </Select.Option>
+                        ))}
+                      </Select>
+                    </Form.Item>
+
+                    <Form.Item
+                      label="Ollama服务器地址"
+                      name="ollama_base_url"
+                      initialValue="http://localhost:11434"
+                    >
+                      <Input
+                        placeholder="http://localhost:11434"
+                        style={{ height: '40px' }}
+                      />
+                    </Form.Item>
+                  </>
+                );
+              }
+
+              return null;
+            }}
+          </Form.Item>
+
+          <Form.Item
+            label="描述（可选）"
+            name={['metadata', 'description']}
+          >
+            <Input.TextArea
+              placeholder="为集合添加描述信息"
+              rows={3}
             />
           </Form.Item>
 
@@ -1104,7 +1283,16 @@ const CollectionsTab: React.FC = () => {
                     </div>
                     <div>
                       <Text strong>嵌入模型：</Text>
-                      <Text>{currentCollection.metadata?.embedding_model || '未知'}</Text>
+                      {currentCollection.embedding_provider && currentCollection.embedding_model ? (
+                        <Space>
+                          <Tag color={currentCollection.embedding_provider === 'alibaba' ? 'blue' : 'green'}>
+                            {currentCollection.embedding_provider === 'alibaba' ? '阿里云' : 'Ollama'}
+                          </Tag>
+                          <Text>{currentCollection.embedding_model}</Text>
+                        </Space>
+                      ) : (
+                        <Text>{currentCollection.metadata?.embedding_model || '未知'}</Text>
+                      )}
                     </div>
                     <div>
                       <Text strong>创建时间：</Text>
