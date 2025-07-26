@@ -170,14 +170,11 @@ const SettingsTab: React.FC = () => {
   const loadStorageConfig = async () => {
     try {
       setStorageLoading(true);
-      console.log('开始加载存储配置...');
 
       const response = await fetch('http://localhost:8000/api/settings/storage');
-      console.log('API响应状态:', response.status);
 
       if (response.ok) {
         const config = await response.json();
-        console.log('加载的存储配置:', config);
 
         // 转换字段名从下划线到驼峰命名
         const normalizedConfig = {
@@ -185,17 +182,12 @@ const SettingsTab: React.FC = () => {
           pathHistory: config.path_history,
           lastUpdated: config.last_updated,
         };
-        console.log('标准化后的配置:', normalizedConfig);
 
         setStorageConfig(normalizedConfig);
-        console.log('存储配置已设置到状态');
-        message.success('存储配置加载成功');
       } else {
-        console.error('API响应失败:', response.status, response.statusText);
         message.error(`加载存储配置失败: ${response.status}`);
       }
     } catch (error) {
-      console.error('加载存储配置出错:', error);
       message.error(`加载存储配置失败: ${error.message}`);
     } finally {
       setStorageLoading(false);
@@ -297,16 +289,13 @@ const SettingsTab: React.FC = () => {
 
   // 组件挂载时加载存储配置
   React.useEffect(() => {
-    console.log('useEffect触发，selectedSection:', selectedSection);
     if (selectedSection === 'storage') {
-      console.log('当前选中存储设置，开始加载配置');
       loadStorageConfig();
     }
   }, [selectedSection]);
 
   // 组件首次挂载时预加载存储配置
   React.useEffect(() => {
-    console.log('组件首次挂载，预加载存储配置');
     loadStorageConfig();
   }, []);
 
