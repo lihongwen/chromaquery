@@ -444,4 +444,53 @@
   .stats-card .ant-statistic-content {
     color: #f1f5f9;
   }
+
+  /* 表格头部深色主题优化 */
+  .ant-table-thead > tr > th {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%) !important;
+    border-bottom: 2px solid #475569 !important;
+    color: #e2e8f0 !important;
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    position: relative;
+  }
+
+  .ant-table-thead > tr > th::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #60a5fa, transparent);
+    opacity: 0.6;
+  }
+
+  .ant-table-thead > tr > th:hover {
+    background: linear-gradient(135deg, #334155 0%, #475569 100%) !important;
+    color: #f1f5f9 !important;
+  }
+
+  /* 表格行深色主题 */
+  .ant-table-tbody > tr {
+    background: #0f172a;
+    border-bottom: 1px solid #334155;
+  }
+
+  .ant-table-tbody > tr:hover > td {
+    background: #1e293b !important;
+    color: #f1f5f9;
+  }
+
+  /* 表格边框优化 */
+  .ant-table {
+    border: 1px solid #334155;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .ant-table-tbody > tr > td {
+    border-bottom: 1px solid #334155;
+    color: #e2e8f0;
+  }
 }
