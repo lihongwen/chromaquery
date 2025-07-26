@@ -125,7 +125,6 @@ const QueryTab: React.FC = () => {
   // 原有状态
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
-  const [queryHistory, setQueryHistory] = useState<string[]>([]);
   const [settings, setSettings] = useState<QuerySettings>({
     similarity_threshold: 0.3,
     n_results: 10,
@@ -321,7 +320,6 @@ const QueryTab: React.FC = () => {
 
     setInputValue('');
     setLoading(true);
-    setQueryHistory(prev => [query, ...prev.slice(0, 9)]);
 
     // 创建助手消息用于流式响应
     const assistantMessageId = `${Date.now()}_assistant`;
@@ -721,31 +719,6 @@ const QueryTab: React.FC = () => {
       </div>
 
       <Collapse size="small" ghost>
-        <Panel header="📝 查询历史" key="history">
-          <List
-            size="small"
-            dataSource={queryHistory}
-            renderItem={(query) => (
-              <List.Item>
-                <Button
-                  type="text"
-                  size="small"
-                  onClick={() => setInputValue(query)}
-                  style={{
-                    textAlign: 'left',
-                    width: '100%',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {query}
-                </Button>
-              </List.Item>
-            )}
-          />
-        </Panel>
-
         <Panel header="⚙️ 查询设置" key="settings">
           <Form layout="vertical" size="small">
             <Form.Item

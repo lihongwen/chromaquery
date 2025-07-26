@@ -6,7 +6,7 @@ import { debounce } from 'lodash-es';
 interface SearchResult {
   value: string;
   label: string;
-  type: 'collection' | 'document' | 'history';
+  type: 'collection' | 'document';
 }
 
 const GlobalSearch: React.FC = () => {
@@ -34,11 +34,6 @@ const GlobalSearch: React.FC = () => {
             value: `document-${value}`,
             label: `文档: ${value}`,
             type: 'document',
-          },
-          {
-            value: `history-${value}`,
-            label: `查询历史: ${value}`,
-            type: 'history',
           },
         ];
 
@@ -68,7 +63,7 @@ const GlobalSearch: React.FC = () => {
       options={searchResults}
       onSearch={handleSearch}
       onSelect={handleSelect}
-      placeholder="搜索集合、文档、查询历史..."
+      placeholder="搜索集合、文档..."
     >
       <Input.Search
         size="middle"

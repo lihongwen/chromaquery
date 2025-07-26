@@ -36,7 +36,7 @@ const { Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 
-type SettingSection = 'connection' | 'theme' | 'notifications' | 'security' | 'advanced' | 'about';
+type SettingSection = 'connection' | 'storage' | 'theme' | 'notifications' | 'security' | 'advanced' | 'about';
 
 interface ConnectionConfig {
   serverUrl: string;
@@ -50,6 +50,23 @@ interface NotificationConfig {
   enableEmail: boolean;
   enableQueryAlerts: boolean;
   enableSystemAlerts: boolean;
+}
+
+interface StorageConfig {
+  currentPath: string;
+  pathHistory: string[];
+  lastUpdated: string;
+}
+
+interface PathInfo {
+  path: string;
+  exists: boolean;
+  isDirectory: boolean;
+  readable: boolean;
+  writable: boolean;
+  collectionsCount: number;
+  sizeMb: number;
+  error?: string;
 }
 
 const SettingsTab: React.FC = () => {
@@ -67,6 +84,14 @@ const SettingsTab: React.FC = () => {
   });
   const [connectionTesting, setConnectionTesting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'success' | 'error' | null>(null);
+  const [storageConfig, setStorageConfig] = useState<StorageConfig>({
+    currentPath: '',
+    pathHistory: [],
+    lastUpdated: '',
+  });
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [pathValidating, setPathValidating] = useState(false);
+  const [customPath, setCustomPath] = useState('');
   const { theme, toggleTheme } = useTheme();
 
   const menuItems: MenuProps['items'] = [
@@ -74,6 +99,11 @@ const SettingsTab: React.FC = () => {
       key: 'connection',
       icon: <LinkOutlined />,
       label: '连接设置',
+    },
+    {
+      key: 'storage',
+      icon: <SettingOutlined />,
+      label: '数据存储',
     },
     {
       key: 'theme',
@@ -135,6 +165,121 @@ const SettingsTab: React.FC = () => {
     // TODO: 实现保存设置逻辑
     message.success('设置已保存');
   };
+
+  // 数据存储相关函数
+  const loadStorageConfig = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/settings/storage');
+      if (response.ok) {
+        const config = await response.json();
+        setStorageConfig(config);
+      } else {
+        message.error('加载存储配置失败');
+      }
+    } catch (error) {
+      message.error('加载存储配置失败');
+    }
+  };
+
+  const validatePath = async (path: string): Promise<PathInfo | null> => {
+    try {
+      setPathValidating(true);
+      const response = await fetch('http://localhost:8000/api/settings/storage/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        return result.path_info;
+      }
+      return null;
+    } catch (error) {
+      message.error('路径验证失败');
+      return null;
+    } finally {
+      setPathValidating(false);
+    }
+  };
+
+  const handleSetStoragePath = async (path: string) => {
+    try {
+      setStorageLoading(true);
+
+      // 先验证路径
+      const pathInfo = await validatePath(path);
+      if (!pathInfo || !pathInfo.exists) {
+        message.error('路径无效或不存在');
+        return;
+      }
+
+      const response = await fetch('http://localhost:8000/api/settings/storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+
+      if (response.ok) {
+        message.success('存储路径设置成功');
+        await loadStorageConfig(); // 重新加载配置
+        setCustomPath('');
+      } else {
+        const error = await response.json();
+        message.error(error.detail || '设置存储路径失败');
+      }
+    } catch (error) {
+      message.error('设置存储路径失败');
+    } finally {
+      setStorageLoading(false);
+    }
+  };
+
+  const handleResetStorage = async () => {
+    try {
+      setStorageLoading(true);
+      const response = await fetch('http://localhost:8000/api/settings/storage/reset', {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        message.success('已重置为默认配置');
+        await loadStorageConfig();
+      } else {
+        message.error('重置配置失败');
+      }
+    } catch (error) {
+      message.error('重置配置失败');
+    } finally {
+      setStorageLoading(false);
+    }
+  };
+
+  const handleRemoveFromHistory = async (path: string) => {
+    try {
+      const response = await fetch('http://localhost:8000/api/settings/storage/history', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+
+      if (response.ok) {
+        message.success('已从历史记录中移除');
+        await loadStorageConfig();
+      } else {
+        message.error('移除失败');
+      }
+    } catch (error) {
+      message.error('移除失败');
+    }
+  };
+
+  // 组件挂载时加载存储配置
+  React.useEffect(() => {
+    if (selectedSection === 'storage') {
+      loadStorageConfig();
+    }
+  }, [selectedSection]);
 
   const renderConnectionSettings = () => (
     <Card title="🔗 ChromaDB连接设置">
@@ -207,6 +352,132 @@ const SettingsTab: React.FC = () => {
         </Form.Item>
       </Form>
     </Card>
+  );
+
+  const renderStorageSettings = () => (
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Card title="💾 数据存储设置">
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <div>
+            <Text strong>当前存储路径：</Text>
+            <br />
+            <Text code style={{ fontSize: '12px' }}>
+              {storageConfig.currentPath || '加载中...'}
+            </Text>
+          </div>
+
+          <div>
+            <Text strong>自定义存储路径：</Text>
+            <Space.Compact style={{ width: '100%', marginTop: 8 }}>
+              <Input
+                placeholder="输入新的存储路径（绝对路径）"
+                value={customPath}
+                onChange={(e) => setCustomPath(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <Button
+                type="primary"
+                loading={storageLoading}
+                disabled={!customPath.trim()}
+                onClick={() => handleSetStoragePath(customPath.trim())}
+              >
+                设置路径
+              </Button>
+            </Space.Compact>
+            <Text type="secondary" style={{ fontSize: '12px' }}>
+              请输入绝对路径，如：/Users/username/Documents/chroma_data
+            </Text>
+          </div>
+
+          <div>
+            <Space>
+              <Button
+                onClick={handleResetStorage}
+                loading={storageLoading}
+              >
+                重置为默认
+              </Button>
+              <Button
+                onClick={loadStorageConfig}
+                loading={storageLoading}
+              >
+                刷新配置
+              </Button>
+            </Space>
+          </div>
+        </Space>
+      </Card>
+
+      <Card title="📁 路径历史记录">
+        <Space direction="vertical" size="small" style={{ width: '100%' }}>
+          {storageConfig.pathHistory && storageConfig.pathHistory.length > 0 ? (
+            storageConfig.pathHistory.map((path, index) => (
+              <Card
+                key={path}
+                size="small"
+                style={{
+                  backgroundColor: path === storageConfig?.currentPath ? '#f6ffed' : undefined,
+                  border: path === storageConfig?.currentPath ? '1px solid #52c41a' : undefined,
+                }}
+              >
+                <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text code style={{ fontSize: '12px', flex: 1 }}>
+                      {path}
+                    </Text>
+                    <Space>
+                      {path === storageConfig?.currentPath && (
+                        <Text type="success" style={{ fontSize: '12px' }}>
+                          当前使用
+                        </Text>
+                      )}
+                      <Button
+                        size="small"
+                        type="link"
+                        disabled={path === storageConfig?.currentPath}
+                        onClick={() => handleSetStoragePath(path)}
+                      >
+                        切换
+                      </Button>
+                      {path !== storageConfig?.currentPath && (
+                        <Button
+                          size="small"
+                          type="link"
+                          danger
+                          onClick={() => handleRemoveFromHistory(path)}
+                        >
+                          移除
+                        </Button>
+                      )}
+                    </Space>
+                  </div>
+                </Space>
+              </Card>
+            ))
+          ) : (
+            <Text type="secondary">暂无历史记录</Text>
+          )}
+        </Space>
+      </Card>
+
+      <Card title="ℹ️ 存储信息">
+        <Space direction="vertical" size="small">
+          <Text>
+            <Text strong>最后更新：</Text>
+            {storageConfig?.lastUpdated ?
+              new Date(storageConfig.lastUpdated).toLocaleString('zh-CN') :
+              '未知'
+            }
+          </Text>
+          <Alert
+            message="数据安全提示"
+            description="更改存储路径前，请确保新路径有足够的存储空间和读写权限。建议定期备份重要数据。"
+            type="info"
+            showIcon
+          />
+        </Space>
+      </Card>
+    </Space>
   );
 
   const renderThemeSettings = () => (
@@ -351,7 +622,7 @@ const SettingsTab: React.FC = () => {
         <Form.Item label="数据备份">
           <Space direction="vertical">
             <Switch defaultChecked />
-            <Text type="secondary">自动备份查询历史和设置</Text>
+            <Text type="secondary">自动备份对话记录和设置</Text>
           </Space>
         </Form.Item>
 
@@ -470,6 +741,8 @@ const SettingsTab: React.FC = () => {
     switch (selectedSection) {
       case 'connection':
         return renderConnectionSettings();
+      case 'storage':
+        return renderStorageSettings();
       case 'theme':
         return renderThemeSettings();
       case 'notifications':

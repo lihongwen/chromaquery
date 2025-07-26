@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Layout, Card, List, Input, Button, Select, Space, Typography, message, Empty, Result, Drawer, FloatButton, Collapse, Tooltip } from 'antd';
-import { SearchOutlined, SendOutlined, MessageOutlined, DatabaseOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined, MenuOutlined, SettingOutlined, EyeOutlined, EyeInvisibleOutlined, CopyOutlined } from '@ant-design/icons';
+import { SearchOutlined, SendOutlined, DatabaseOutlined, ArrowLeftOutlined, PlusOutlined, SettingOutlined, EyeOutlined, EyeInvisibleOutlined, CopyOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import ThemeToggle from './ThemeToggle';
 import { useResponsive } from '../hooks/useResponsive';
-import { api, API_BASE_URL } from '../config/api';
+import { api } from '../config/api';
 import MarkdownRenderer from './MarkdownRenderer';
 
 const { Sider, Content } = Layout;
@@ -116,8 +116,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
     }
   }, [responsive.isMobile, responsive.isTablet]);
 
-  // 状态管理
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  // 状态管理 - 移除对话历史功能，只保留当前对话
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
   const [collections, setCollections] = useState<CollectionInfo[]>([]);
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
@@ -147,7 +146,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
     }
   }, []);
 
-  // 创建新对话 - 优化性能
+  // 创建新对话 - 移除对话历史功能
   const createNewConversation = useCallback(() => {
     const newConversation: Conversation = {
       id: `conv_${Date.now()}`,
@@ -155,18 +154,9 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
       created_at: new Date().toISOString(),
       messages: []
     };
-    const updatedConversations = [newConversation, ...conversations];
-    setConversations(updatedConversations);
     setCurrentConversation(newConversation);
-  }, [conversations]);
-
-  // 清空对话历史 - 优化性能
-  const clearConversations = useCallback(() => {
-    setConversations([]);
-    setCurrentConversation(null);
-    localStorage.removeItem('chromadb_conversations');
-    message.success('对话历史已清空');
   }, []);
+
 
   // 切换查询结果的展开/收起状态 - 优化性能
   const toggleResultExpansion = useCallback((resultId: string) => {
@@ -262,9 +252,6 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
     };
 
     setCurrentConversation(updatedConversation);
-    setConversations(prev =>
-      prev.map(conv => conv.id === conversation.id ? updatedConversation : conv)
-    );
 
     try {
       // 调用新的LLM查询API（流式响应）
@@ -311,25 +298,6 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
                     );
                     return { ...prev, messages: updatedMessages };
                   });
-
-                  setConversations(prev =>
-                    prev.map(conv => {
-                      if (conv.id === conversation.id) {
-                        const updatedMessages = conv.messages.map(msg =>
-                          msg.id === assistantMessageId
-                            ? {
-                                ...msg,
-                                llm_response: accumulatedResponse,
-                                content: '智能回答：',
-                                is_streaming: true
-                              }
-                            : msg
-                        );
-                        return { ...conv, messages: updatedMessages };
-                      }
-                      return conv;
-                    })
-                  );
                 }
               } catch (e) {
                 console.error('解析流式数据失败:', e);
@@ -354,24 +322,6 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
         return { ...prev, messages: updatedMessages };
       });
 
-      setConversations(prev =>
-        prev.map(conv => {
-          if (conv.id === conversation.id) {
-            const updatedMessages = conv.messages.map(msg =>
-              msg.id === assistantMessageId
-                ? {
-                    ...msg,
-                    is_streaming: false,
-                    content: '智能回答：'
-                  }
-                : msg
-            );
-            return { ...conv, messages: updatedMessages };
-          }
-          return conv;
-        })
-      );
-
     } catch (error: any) {
       console.error('LLM查询失败:', error);
       const errorMessage = error.message || 'LLM查询失败';
@@ -391,25 +341,6 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
         );
         return { ...prev, messages: updatedMessages };
       });
-
-      setConversations(prev =>
-        prev.map(conv => {
-          if (conv.id === conversation.id) {
-            const updatedMessages = conv.messages.map(msg =>
-              msg.id === assistantMessageId
-                ? {
-                    ...msg,
-                    content: `查询失败: ${errorMessage}`,
-                    is_streaming: false,
-                    llm_response: undefined
-                  }
-                : msg
-            );
-            return { ...conv, messages: updatedMessages };
-          }
-          return conv;
-        })
-      );
 
       message.error(errorMessage);
     } finally {
@@ -439,8 +370,6 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
         created_at: new Date().toISOString(),
         messages: []
       };
-      const updatedConversations = [conversation, ...conversations];
-      setConversations(updatedConversations);
       setCurrentConversation(conversation);
     } else if (conversation.title === '新对话' && conversation.messages.length === 0) {
       // 如果是新对话且还没有消息，更新标题
@@ -449,9 +378,6 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
         title: queryText.slice(0, 20) + (queryText.length > 20 ? '...' : '')
       };
       setCurrentConversation(conversation);
-      setConversations(prev =>
-        prev.map(conv => conv.id === conversation!.id ? conversation! : conv)
-      );
     }
 
     // 添加用户消息
@@ -479,40 +405,11 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
     }
   };
 
-  // 从localStorage加载对话历史
-  const loadConversations = () => {
-    try {
-      const saved = localStorage.getItem('chromadb_conversations');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setConversations(parsed);
-      }
-    } catch (error) {
-      console.error('加载对话历史失败:', error);
-    }
-  };
 
-  // 保存对话历史到localStorage - 优化性能
-  const saveConversations = useCallback((convs: Conversation[]) => {
-    try {
-      localStorage.setItem('chromadb_conversations', JSON.stringify(convs));
-    } catch (error) {
-      console.error('保存对话历史失败:', error);
-    }
-  }, []);
-
-  // 组件挂载时获取集合列表和对话历史
+  // 组件挂载时获取集合列表
   useEffect(() => {
     fetchCollections();
-    loadConversations();
-  }, []);
-
-  // 当对话列表变化时保存到localStorage
-  useEffect(() => {
-    if (conversations.length > 0) {
-      saveConversations(conversations);
-    }
-  }, [conversations]);
+  }, [fetchCollections]);
 
   // 当切换对话时，自动滚动到对话开头
   useEffect(() => {
@@ -555,7 +452,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
     );
   }
 
-  // 折叠状态下的左侧栏内容
+  // 折叠状态下的左侧栏内容 - 移除查询历史功能
   const collapsedLeftSiderContent = useMemo(() => (
     <div style={{
       padding: '16px 0',
@@ -567,20 +464,7 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
     }}>
       <div style={{ flex: 1 }}>
         <Space direction="vertical" size="small" style={{ width: '100%' }}>
-          <Tooltip title="对话历史" placement="right">
-            <div style={{
-              fontSize: '18px',
-              cursor: 'pointer',
-              padding: '8px',
-              borderRadius: '6px',
-              transition: 'background-color 0.2s',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-            >💬</div>
-          </Tooltip>
-          
-          <Tooltip title="快捷操作" placement="right">
+          <Tooltip title="新对话" placement="right">
             <div style={{
               fontSize: '18px',
               cursor: 'pointer',
@@ -591,91 +475,17 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
             onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
             onClick={createNewConversation}
-            >⚡</div>
+            >💬</div>
           </Tooltip>
         </Space>
       </div>
     </div>
   ), [createNewConversation]);
 
-  // 展开状态下的左侧栏内容 - 移除集合选择，只保留对话历史和快捷操作
+  // 展开状态下的左侧栏内容 - 完全移除查询历史功能，只保留快捷操作
   const expandedLeftSiderContent = useMemo(() => (
     <div style={{ padding: 16 }}>
-      <Collapse defaultActiveKey={['conversations', 'actions']}>
-        <Panel header="💬 对话历史" key="conversations">
-          <List
-            size="small"
-            dataSource={conversations}
-            renderItem={(conversation) => (
-              <List.Item
-                style={{
-                  cursor: 'pointer',
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  backgroundColor: currentConversation?.id === conversation.id
-                    ? '#f3f4f6'
-                    : 'transparent',
-                  border: currentConversation?.id === conversation.id
-                    ? '1px solid #e5e7eb'
-                    : '1px solid transparent',
-                  marginBottom: '4px',
-                  transition: 'background-color 0.2s ease',
-                }}
-                onClick={() => {
-                  setCurrentConversation(conversation);
-                  // 当选择历史对话时，自动设置该对话使用的集合
-                  const firstUserMessage = conversation.messages.find(msg => msg.type === 'user');
-                  if (firstUserMessage && firstUserMessage.selected_collections) {
-                    setSelectedCollections(firstUserMessage.selected_collections);
-                  }
-                  if (responsive.isMobile) {
-                    setLeftDrawerVisible(false);
-                  }
-                }}
-                onMouseEnter={(e) => {
-                  if (currentConversation?.id !== conversation.id) {
-                    e.currentTarget.style.backgroundColor = '#f9fafb';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (currentConversation?.id !== conversation.id) {
-                    e.currentTarget.style.backgroundColor = 'transparent';
-                  }
-                }}
-              >
-                <List.Item.Meta
-                  title={
-                    <Text
-                      ellipsis
-                      style={{
-                        fontSize: '13px',
-                        fontWeight: currentConversation?.id === conversation.id ? 600 : 500,
-                        color: currentConversation?.id === conversation.id ? '#1d4ed8' : 'var(--ant-color-text)'
-                      }}
-                    >
-                      {conversation.title}
-                    </Text>
-                  }
-                  description={
-                    <Text type="secondary" style={{ fontSize: '11px' }}>
-                      {new Date(conversation.created_at).toLocaleString()}
-                    </Text>
-                  }
-                />
-              </List.Item>
-            )}
-            locale={{
-              emptyText: (
-                <div style={{ textAlign: 'center', padding: '16px' }}>
-                  <MessageOutlined style={{ fontSize: '20px', color: '#d9d9d9', marginBottom: '8px' }} />
-                  <div style={{ color: '#999', fontSize: '12px' }}>暂无对话历史</div>
-                  <div style={{ color: '#ccc', fontSize: '11px' }}>点击"新对话"开始查询</div>
-                </div>
-              )
-            }}
-          />
-        </Panel>
-
+      <Collapse defaultActiveKey={['actions']}>
         <Panel header="⚡ 快捷操作" key="actions">
           <Space direction="vertical" style={{ width: '100%' }}>
             <Button
@@ -691,25 +501,11 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
             >
               新对话
             </Button>
-            <Button
-              size="small"
-              icon={<DeleteOutlined />}
-              block
-              onClick={clearConversations}
-              disabled={conversations.length === 0}
-              style={{
-                borderRadius: '6px',
-                height: '32px',
-                opacity: conversations.length === 0 ? 0.5 : 1
-              }}
-            >
-              清空历史
-            </Button>
           </Space>
         </Panel>
       </Collapse>
     </div>
-  ), [responsive.isMobile, conversations, currentConversation, clearConversations, createNewConversation]);
+  ), [createNewConversation]);
 
   // 左侧栏内容
   const leftSiderContent = leftCollapsed ? collapsedLeftSiderContent : expandedLeftSiderContent;
@@ -1293,9 +1089,9 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
         </Sider>
       )}
 
-      {/* 移动端抽屉 - 对话历史 */}
+      {/* 移动端抽屉 - 快捷操作 */}
       <Drawer
-        title="对话历史"
+        title="快捷操作"
         placement="left"
         onClose={() => setLeftDrawerVisible(false)}
         open={leftDrawerVisible}
@@ -1325,9 +1121,9 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
             style={{ right: 16, bottom: 80 }}
           >
             <FloatButton
-              icon={<MessageOutlined />}
-              tooltip="对话历史"
-              onClick={() => setLeftDrawerVisible(true)}
+              icon={<PlusOutlined />}
+              tooltip="新对话"
+              onClick={createNewConversation}
             />
             <FloatButton
               icon={<SettingOutlined />}
