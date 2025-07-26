@@ -21,7 +21,8 @@ import {
   Upload,
   Popconfirm,
   Tooltip,
-  Table
+  Table,
+  Pagination
 } from 'antd';
 import {
   DatabaseOutlined,
@@ -76,6 +77,10 @@ const CollectionsTab: React.FC = () => {
   // 视图模式状态管理
   const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
 
+  // 分页状态管理
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12); // 卡片视图默认12个，列表视图默认10个
+
   // 表单实例
   const [createForm] = Form.useForm();
   const [importForm] = Form.useForm();
@@ -86,6 +91,31 @@ const CollectionsTab: React.FC = () => {
     // 从localStorage加载收藏的集合
     loadFavoriteCollections();
   }, []);
+
+  // 视图模式切换时调整分页大小
+  useEffect(() => {
+    if (viewMode === 'card') {
+      setPageSize(12);
+    } else {
+      setPageSize(10);
+    }
+    setCurrentPage(1); // 重置到第一页
+  }, [viewMode]);
+
+  // 计算分页数据
+  const getPaginatedCollections = () => {
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    return collections.slice(startIndex, endIndex);
+  };
+
+  // 分页变化处理
+  const handlePageChange = (page: number, size?: number) => {
+    setCurrentPage(page);
+    if (size && size !== pageSize) {
+      setPageSize(size);
+    }
+  };
 
   // 加载收藏的集合
   const loadFavoriteCollections = () => {
@@ -271,17 +301,7 @@ const CollectionsTab: React.FC = () => {
     }}>
       <div style={{ flex: 1 }}>
         <Space direction="vertical" size="small" style={{ width: '100%' }}>
-          <Tooltip title="总览" placement="right">
-            <div style={{
-              fontSize: '18px',
-              cursor: 'pointer',
-              padding: '8px',
-              borderRadius: '6px',
-              transition: 'background-color 0.2s',
-              ':hover': { backgroundColor: 'var(--ant-color-fill-tertiary)' }
-            }}>📊</div>
-          </Tooltip>
-          <Tooltip title="收藏" placement="right">
+          <Tooltip title="收藏夹" placement="right">
             <div style={{
               fontSize: '18px',
               cursor: 'pointer',
@@ -289,33 +309,6 @@ const CollectionsTab: React.FC = () => {
               borderRadius: '6px',
               transition: 'background-color 0.2s'
             }}>⭐</div>
-          </Tooltip>
-          <Tooltip title="最近" placement="right">
-            <div style={{
-              fontSize: '18px',
-              cursor: 'pointer',
-              padding: '8px',
-              borderRadius: '6px',
-              transition: 'background-color 0.2s'
-            }}>🕒</div>
-          </Tooltip>
-          <Tooltip title="标签" placement="right">
-            <div style={{
-              fontSize: '18px',
-              cursor: 'pointer',
-              padding: '8px',
-              borderRadius: '6px',
-              transition: 'background-color 0.2s'
-            }}>🏷️</div>
-          </Tooltip>
-          <Tooltip title="集合" placement="right">
-            <div style={{
-              fontSize: '18px',
-              cursor: 'pointer',
-              padding: '8px',
-              borderRadius: '6px',
-              transition: 'background-color 0.2s'
-            }}>📁</div>
           </Tooltip>
         </Space>
       </div>
@@ -353,14 +346,7 @@ const CollectionsTab: React.FC = () => {
   // 展开状态下的侧边栏内容
   const expandedSiderContent = (
     <div style={{ padding: 16 }}>
-      <Collapse defaultActiveKey={['overview', 'collections', 'actions']}>
-        <Panel header="📊 总览" key="overview">
-          <Space direction="vertical" style={{ width: '100%' }}>
-            <Text type="secondary">总集合数: {collections.length}</Text>
-            <Text type="secondary">总文档数: {collections.reduce((sum, c) => sum + c.count, 0)}</Text>
-          </Space>
-        </Panel>
-
+      <Collapse defaultActiveKey={['favorites', 'actions']}>
         <Panel header="⭐ 收藏夹" key="favorites">
           {favoriteCollections.size === 0 ? (
             <Text type="secondary">暂无收藏</Text>
@@ -394,57 +380,6 @@ const CollectionsTab: React.FC = () => {
               )}
             />
           )}
-        </Panel>
-
-        <Panel header="🕒 最近访问" key="recent">
-          <List
-            size="small"
-            dataSource={collections.slice(0, 3)}
-            renderItem={(collection) => (
-              <List.Item>
-                <Button
-                  type="text"
-                  size="small"
-                  onClick={() => handleCollectionClick(collection.name)}
-                >
-                  {collection.display_name}
-                </Button>
-              </List.Item>
-            )}
-          />
-        </Panel>
-
-        <Panel header="🏷️ 标签" key="tags">
-          <Text type="secondary">暂无标签</Text>
-        </Panel>
-
-        <Panel header="📁 集合列表" key="collections">
-          <List
-            size="small"
-            dataSource={collections}
-            renderItem={(collection) => (
-              <List.Item>
-                <Tooltip title={collection.display_name} placement="right">
-                  <Button
-                    type="text"
-                    size="small"
-                    onClick={() => handleCollectionClick(collection.name)}
-                    style={{
-                      fontWeight: selectedCollection === collection.name ? 'bold' : 'normal',
-                      width: '100%',
-                      textAlign: 'left',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      padding: '4px 8px',
-                    }}
-                  >
-                    {collection.display_name}
-                  </Button>
-                </Tooltip>
-              </List.Item>
-            )}
-          />
         </Panel>
 
         <Panel header="⚡ 快捷操作" key="actions">
@@ -488,7 +423,7 @@ const CollectionsTab: React.FC = () => {
   }
 
   return (
-    <Layout style={{ height: 'calc(100vh - 120px)', minHeight: '500px' }}>
+    <Layout style={{ height: 'calc(100vh - 64px)', minHeight: '500px' }}>
       {!isMobile && (
         <Sider
           width={280}
@@ -515,46 +450,8 @@ const CollectionsTab: React.FC = () => {
             onBack={() => setSelectedCollection(null)}
           />
         ) : (
-          <>
-            {/* 统计卡片 */}
-            <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="总集合数"
-                value={collections.length}
-                prefix={<DatabaseOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="总文档数"
-                value={collections.reduce((sum, c) => sum + c.count, 0)}
-                prefix={<FileTextOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="平均文档数"
-                value={collections.length > 0 ? Math.round(collections.reduce((sum, c) => sum + c.count, 0) / collections.length) : 0}
-                prefix={<TagOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="活跃集合"
-                value={collections.filter(c => c.count > 0).length}
-                prefix={<StarOutlined />}
-              />
-            </Card>
-          </Col>
-        </Row>
+          <div style={{ position: 'relative', height: '100%' }}>
+            {/* 主要内容区域 */}
 
         {/* 搜索和过滤栏 */}
         <Row style={{ marginBottom: 24 }} justify="space-between" align="middle">
@@ -596,10 +493,11 @@ const CollectionsTab: React.FC = () => {
         </Row>
 
         {/* 集合视图 */}
-        {viewMode === 'card' ? (
-          // 卡片视图
-          <Row gutter={[16, 16]}>
-            {collections.map((collection) => (
+        <div style={{ minHeight: 'calc(100vh - 300px)', marginBottom: '80px' }}>
+          {viewMode === 'card' ? (
+            // 卡片视图
+            <Row gutter={[16, 16]}>
+              {getPaginatedCollections().map((collection) => (
               <Col
                 key={collection.name}
                 xs={24}
@@ -707,17 +605,12 @@ const CollectionsTab: React.FC = () => {
               </Col>
             ))}
           </Row>
-        ) : (
-          // 列表视图
-          <Table
-            dataSource={collections}
-            rowKey="name"
-            pagination={{
-              pageSize: 10,
-              showSizeChanger: true,
-              showQuickJumper: true,
-              showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`
-            }}
+          ) : (
+            // 列表视图
+            <Table
+              dataSource={getPaginatedCollections()}
+              rowKey="name"
+              pagination={false}
             columns={[
               {
                 title: '集合名称',
@@ -834,8 +727,61 @@ const CollectionsTab: React.FC = () => {
               style: { cursor: 'pointer' }
             })}
           />
-        )}
-          </>
+          )}
+        </div>
+
+        {/* 底部固定分页导航 */}
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          padding: '12px 24px',
+          backgroundColor: 'var(--ant-color-bg-container)',
+          border: '1px solid var(--ant-color-border)',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+          zIndex: 200,
+          backdropFilter: 'blur(8px)'
+        }}>
+          <Pagination
+            current={currentPage}
+            total={collections.length}
+            pageSize={pageSize}
+            showSizeChanger
+            showQuickJumper
+            showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`}
+            onChange={handlePageChange}
+            pageSizeOptions={viewMode === 'card' ? ['8', '12', '16', '24'] : ['5', '10', '20', '50']}
+            size="small"
+          />
+        </div>
+
+        {/* 页面右下角统计信息 */}
+          <div style={{
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            padding: '8px 16px',
+            backgroundColor: 'var(--ant-color-bg-container)',
+            border: '1px solid var(--ant-color-border)',
+            borderRadius: '6px',
+            fontSize: '12px',
+            color: 'var(--ant-color-text-secondary)',
+            opacity: 0.7,
+            zIndex: 100,
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+            transition: 'opacity 0.3s ease'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+          onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
+          >
+            总集合: {collections.length} |
+            总文档: {collections.reduce((sum, c) => sum + c.count, 0).toLocaleString()} |
+            平均: {collections.length > 0 ? Math.round(collections.reduce((sum, c) => sum + c.count, 0) / collections.length) : 0} |
+            活跃: {collections.filter(c => c.count > 0).length}
+          </div>
+          </div>
         )}
       </Content>
 

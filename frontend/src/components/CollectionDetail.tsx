@@ -12,7 +12,6 @@ import {
   Empty,
   Spin,
   message,
-  Breadcrumb,
   Upload,
   Modal,
   Form,
@@ -23,8 +22,8 @@ import {
   Alert,
   Row,
   Col,
-  Statistic,
   Popconfirm,
+  Pagination,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -32,7 +31,6 @@ import {
   InfoCircleOutlined,
   FileTextOutlined,
   CalendarOutlined,
-  HomeOutlined,
   UploadOutlined,
   InboxOutlined,
   SettingOutlined,
@@ -41,7 +39,6 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 import { api, API_BASE_URL } from '../config/api';
-import ThemeToggle from './ThemeToggle';
 import {
   isSupportedFile,
   getFileFormatInfo,
@@ -115,6 +112,10 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
 }) => {
   const [collectionDetail, setCollectionDetail] = useState<CollectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // 分页状态管理
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(8);
 
   // 辅助函数：获取向量维度
   const getVectorDimension = () => {
@@ -459,6 +460,38 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
     }));
   };
 
+  // 获取所有文档数据（不分组）
+  const getAllDocuments = () => {
+    if (!collectionDetail) return [];
+
+    const documents = collectionDetail.documents.length > 0
+      ? collectionDetail.documents
+      : collectionDetail.sample_documents;
+
+    return documents.map((doc, index) => ({
+      ...doc,
+      key: doc.id || `doc-${index}`,
+      index: index + 1,
+      metadata: doc.metadata || {}
+    }));
+  };
+
+  // 获取分页后的文档数据（按文件分组）
+  const getPaginatedDocuments = () => {
+    const groupedDocuments = getGroupedDocuments();
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    return groupedDocuments.slice(startIndex, endIndex);
+  };
+
+  // 分页变化处理
+  const handlePageChange = (page: number, size?: number) => {
+    setCurrentPage(page);
+    if (size && size !== pageSize) {
+      setPageSize(size);
+    }
+  };
+
   // 组件挂载时获取集合详情
   useEffect(() => {
     fetchCollectionDetail();
@@ -512,95 +545,54 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
 
   return (
     <Layout>
-      <Header>
-        <div className="header-title">
+      <Header style={{
+        height: '48px',
+        lineHeight: '48px',
+        padding: '0 24px',
+        backgroundColor: 'var(--ant-color-bg-container)',
+        borderBottom: '1px solid var(--ant-color-border)'
+      }}>
+        <div className="header-title" style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          height: '100%'
+        }}>
           <div>
-            <Breadcrumb style={{ marginBottom: 8 }}>
-              <Breadcrumb.Item>
-                <HomeOutlined />
-                <span style={{ marginLeft: 4 }}>首页</span>
-              </Breadcrumb.Item>
-              <Breadcrumb.Item>集合管理</Breadcrumb.Item>
-              <Breadcrumb.Item>{collectionDetail.display_name}</Breadcrumb.Item>
-            </Breadcrumb>
-            <Title level={3} style={{ margin: 0 }}>
-              <DatabaseOutlined style={{ marginRight: 12 }} />
+            <Title level={4} style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>
+              <DatabaseOutlined style={{ marginRight: 8, fontSize: '16px' }} />
               {collectionDetail.display_name}
             </Title>
           </div>
           <div className="header-actions slide-in-right">
             <Button
-              icon={<ArrowLeftOutlined />}
-              onClick={onBack}
-              style={{ marginRight: 8 }}
-            >
-              返回列表
-            </Button>
-            <ThemeToggle />
-            <Button
               type="primary"
               icon={<UploadOutlined />}
               onClick={openUploadModal}
+              size="small"
               style={{
                 background: '#10b981',
                 borderColor: '#10b981',
-                height: '36px',
-                padding: '0 16px',
-                fontWeight: 500
+                marginRight: 8
               }}
             >
               上传文档
+            </Button>
+            <Button
+              icon={<ArrowLeftOutlined />}
+              onClick={onBack}
+              size="small"
+            >
+              返回列表
             </Button>
           </div>
         </div>
       </Header>
 
-      <Content className="fade-in-up">
-        {/* 统计信息卡片 */}
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="文件数量"
-                value={collectionDetail.uploaded_files?.length || 0}
-                prefix={<FolderOutlined />}
-                valueStyle={{ color: '#fa8c16' }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="向量维度"
-                value={getVectorDimension()}
-                suffix="维"
-                prefix={<DatabaseOutlined />}
-                valueStyle={{ color: '#52c41a' }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="文档总数"
-                value={collectionDetail.count}
-                prefix={<FileTextOutlined />}
-                valueStyle={{ color: '#1890ff' }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card>
-              <Statistic
-                title="分块方法"
-                value={collectionDetail.chunk_statistics?.methods_used?.length || 0}
-                suffix="种"
-                prefix={<SettingOutlined />}
-                valueStyle={{ color: '#722ed1' }}
-              />
-            </Card>
-          </Col>
-        </Row>
+      <Content className="fade-in-up" style={{
+        position: 'relative',
+        padding: '16px 24px 24px 24px'
+      }}>
 
         <Card>
           <Tabs
@@ -652,7 +644,8 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                       )}
 
                       <Table
-                        dataSource={getGroupedDocuments()}
+                        dataSource={getPaginatedDocuments()}
+                        pagination={false}
                         columns={[
                           {
                             title: '序号',
@@ -826,13 +819,6 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                             )
                           }
                         ]}
-                        pagination={{
-                          pageSize: 8,
-                          showSizeChanger: true,
-                          showQuickJumper: true,
-                          showTotal: (total, range) => `第 ${range[0]}-${range[1]} 项，共 ${total} 个文档`,
-                          pageSizeOptions: ['5', '8', '10', '20'],
-                        }}
                         size="small"
                         bordered
                         scroll={{ x: 1200 }}
@@ -915,6 +901,63 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
             ]}
           />
         </Card>
+
+        {/* 底部固定分页导航 */}
+        {collectionDetail.count > 0 && getGroupedDocuments().length > pageSize && (
+          <div style={{
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            padding: '12px 24px',
+            backgroundColor: 'var(--ant-color-bg-container)',
+            border: '1px solid var(--ant-color-border)',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+            zIndex: 200,
+            backdropFilter: 'blur(8px)'
+          }}>
+            <Pagination
+              current={currentPage}
+              total={getGroupedDocuments().length}
+              pageSize={pageSize}
+              showSizeChanger
+              showQuickJumper
+              showTotal={(total, range) => `第 ${range[0]}-${range[1]} 项，共 ${total} 个文件`}
+              onChange={handlePageChange}
+              pageSizeOptions={['5', '8', '10', '20']}
+              size="small"
+            />
+          </div>
+        )}
+
+        {/* 页面右下角统计信息 */}
+        <div
+          className="stats-info"
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            padding: '8px 16px',
+            backgroundColor: 'var(--ant-color-bg-container)',
+            border: '1px solid var(--ant-color-border)',
+            borderRadius: '6px',
+            fontSize: '12px',
+            color: 'var(--ant-color-text-secondary)',
+            opacity: 0.7,
+            zIndex: 100,
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+            transition: 'opacity 0.3s ease',
+            backdropFilter: 'blur(4px)'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+          onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
+        >
+          文件: {collectionDetail.uploaded_files?.length || 0} |
+          维度: {getVectorDimension()} |
+          文档: {collectionDetail.count.toLocaleString()} |
+          分块: {collectionDetail.chunk_statistics?.methods_used?.length || 0}种
+        </div>
       </Content>
 
       {/* 文档上传模态框 */}
