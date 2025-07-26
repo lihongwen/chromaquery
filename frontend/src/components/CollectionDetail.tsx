@@ -527,9 +527,10 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
         backgroundColor: 'var(--ant-color-bg-container)',
         borderBottom: '1px solid var(--ant-color-border)',
         position: 'sticky',
-        top: '64px',
+        top: '80px',
         zIndex: 99,
-        marginBottom: '16px'
+        marginBottom: '16px',
+        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.06)'
       }}>
         <div className="header-title" style={{
           display: 'flex',
