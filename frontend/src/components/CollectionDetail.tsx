@@ -527,7 +527,7 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
         backgroundColor: 'var(--ant-color-bg-container)',
         borderBottom: '1px solid var(--ant-color-border)',
         position: 'sticky',
-        top: '80px',
+        top: '88px',
         zIndex: 99,
         marginBottom: '16px',
         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.06)'
