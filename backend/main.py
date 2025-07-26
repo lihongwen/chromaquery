@@ -83,7 +83,7 @@ def init_chroma_client():
     global chroma_client
     try:
         # 使用持久化客户端
-        chroma_client = chromadb.PersistentClient(path="./chroma_data")
+        chroma_client = chromadb.PersistentClient(path="../chroma_data")
         logger.info("ChromaDB客户端初始化成功")
     except Exception as e:
         logger.error(f"ChromaDB客户端初始化失败: {e}")
