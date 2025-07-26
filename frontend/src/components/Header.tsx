@@ -55,6 +55,9 @@ const Header: React.FC<HeaderProps> = ({ breadcrumbs, activeTab, onTabChange }) 
         alignItems: 'center',
         justifyContent: 'space-between',
         height: '64px',
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
       }}
     >
       {/* 左侧：Logo + 应用名称 + 面包屑 */}
