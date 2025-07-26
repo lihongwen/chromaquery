@@ -169,15 +169,27 @@ const SettingsTab: React.FC = () => {
   // 数据存储相关函数
   const loadStorageConfig = async () => {
     try {
+      setStorageLoading(true);
+      console.log('开始加载存储配置...');
+
       const response = await fetch('http://localhost:8000/api/settings/storage');
+      console.log('API响应状态:', response.status);
+
       if (response.ok) {
         const config = await response.json();
+        console.log('加载的存储配置:', config);
         setStorageConfig(config);
+        console.log('存储配置已设置到状态');
+        message.success('存储配置加载成功');
       } else {
-        message.error('加载存储配置失败');
+        console.error('API响应失败:', response.status, response.statusText);
+        message.error(`加载存储配置失败: ${response.status}`);
       }
     } catch (error) {
-      message.error('加载存储配置失败');
+      console.error('加载存储配置出错:', error);
+      message.error(`加载存储配置失败: ${error.message}`);
+    } finally {
+      setStorageLoading(false);
     }
   };
 
@@ -276,10 +288,18 @@ const SettingsTab: React.FC = () => {
 
   // 组件挂载时加载存储配置
   React.useEffect(() => {
+    console.log('useEffect触发，selectedSection:', selectedSection);
     if (selectedSection === 'storage') {
+      console.log('当前选中存储设置，开始加载配置');
       loadStorageConfig();
     }
   }, [selectedSection]);
+
+  // 组件首次挂载时预加载存储配置
+  React.useEffect(() => {
+    console.log('组件首次挂载，预加载存储配置');
+    loadStorageConfig();
+  }, []);
 
   const renderConnectionSettings = () => (
     <Card title="🔗 ChromaDB连接设置">
@@ -356,14 +376,45 @@ const SettingsTab: React.FC = () => {
 
   const renderStorageSettings = () => (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Card title="💾 数据存储设置">
+      <Card title="💾 数据存储设置"
+            extra={
+              <Button
+                size="small"
+                onClick={loadStorageConfig}
+                loading={storageLoading}
+              >
+                刷新
+              </Button>
+            }>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <div>
             <Text strong>当前存储路径：</Text>
             <br />
-            <Text code style={{ fontSize: '12px' }}>
-              {storageConfig.currentPath || '加载中...'}
-            </Text>
+            {storageLoading ? (
+              <Text type="secondary">正在加载...</Text>
+            ) : storageConfig?.currentPath ? (
+              <>
+                <Text code style={{ fontSize: '12px' }}>
+                  {storageConfig.currentPath}
+                </Text>
+                <div style={{ marginTop: 4 }}>
+                  <Text type="secondary" style={{ fontSize: '11px' }}>
+                    状态：已加载 | 最后更新：{storageConfig.lastUpdated ?
+                      new Date(storageConfig.lastUpdated).toLocaleString('zh-CN') :
+                      '未知'
+                    }
+                  </Text>
+                </div>
+              </>
+            ) : (
+              <div>
+                <Text type="warning">未能加载存储路径</Text>
+                <br />
+                <Button size="small" type="link" onClick={loadStorageConfig}>
+                  点击重试
+                </Button>
+              </div>
+            )}
           </div>
 
           <div>
