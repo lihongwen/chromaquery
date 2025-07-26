@@ -238,30 +238,7 @@ const SettingsTab: React.FC = () => {
           </Radio.Group>
         </Form.Item>
         
-        <Form.Item label="主色调">
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {[
-              { name: '蓝色', color: '#3b82f6' },
-              { name: '绿色', color: '#10b981' },
-              { name: '紫色', color: '#8b5cf6' },
-              { name: '红色', color: '#ef4444' },
-              { name: '橙色', color: '#f59e0b' },
-              { name: '青色', color: '#06b6d4' },
-            ].map((item) => (
-              <Button
-                key={item.name}
-                style={{
-                  backgroundColor: item.color,
-                  borderColor: item.color,
-                  color: 'white',
-                  marginBottom: 8,
-                }}
-              >
-                {item.name}
-              </Button>
-            ))}
-          </div>
-        </Form.Item>
+
 
         <Form.Item label="界面缩放">
           <Slider
