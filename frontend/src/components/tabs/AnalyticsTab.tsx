@@ -1,30 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Card, 
-  Row, 
-  Col, 
-  Statistic, 
-  Table, 
-  Tag, 
-  Space, 
-  DatePicker, 
-  Select, 
-  Button, 
+import {
+  Card,
+  Row,
+  Col,
+  Statistic,
+  Table,
+  Tag,
+  Space,
+  DatePicker,
+  Select,
+  Button,
   Typography,
   Badge,
   Empty,
-  Spin
+  Spin,
+  message
 } from 'antd';
-import { 
-  SearchOutlined, 
-  ClockCircleOutlined, 
-  DatabaseOutlined, 
-  UserOutlined, 
+import {
+  SearchOutlined,
+  ClockCircleOutlined,
+  DatabaseOutlined,
+  UserOutlined,
   ReloadOutlined,
   BarChartOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
+import { api } from '../../config/api';
 
 const { Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -67,67 +69,32 @@ const AnalyticsTab: React.FC = () => {
   const fetchAnalyticsData = async () => {
     setLoading(true);
     try {
-      // TODO: 实现实际的分析数据获取逻辑
-      // 这里是模拟数据
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const mockData: AnalyticsData = {
-        totalQueries: 1234,
-        avgResponseTime: 0.23,
-        activeCollections: 8,
-        uniqueUsers: 15,
-        queryTrend: [
-          { date: '2024-01-01', count: 45 },
-          { date: '2024-01-02', count: 67 },
-          { date: '2024-01-03', count: 52 },
-          { date: '2024-01-04', count: 89 },
-          { date: '2024-01-05', count: 76 },
-          { date: '2024-01-06', count: 91 },
-          { date: '2024-01-07', count: 103 },
-        ],
-        collectionUsage: [
-          { collection: 'documents', count: 456 },
-          { collection: 'images', count: 234 },
-          { collection: 'embeddings', count: 189 },
-          { collection: 'vectors', count: 345 },
-        ],
-        recentLogs: [
-          {
-            id: '1',
-            timestamp: '2024-01-07 14:30:25',
-            query: '机器学习算法',
-            collection: 'documents',
-            results_count: 15,
-            response_time: 0.18,
-            status: 'success',
-            user_id: 'user1'
-          },
-          {
-            id: '2',
-            timestamp: '2024-01-07 14:25:12',
-            query: '深度学习框架',
-            collection: 'documents',
-            results_count: 8,
-            response_time: 0.25,
-            status: 'success',
-            user_id: 'user2'
-          },
-          {
-            id: '3',
-            timestamp: '2024-01-07 14:20:45',
-            query: '数据预处理',
-            collection: 'images',
-            results_count: 0,
-            response_time: 0.12,
-            status: 'error',
-            user_id: 'user1'
-          },
-        ]
+      // 准备API参数
+      const params = {
+        start_date: dateRange[0].format('YYYY-MM-DD HH:mm:ss'),
+        end_date: dateRange[1].format('YYYY-MM-DD HH:mm:ss'),
+        period: selectedPeriod
       };
-      
-      setData(mockData);
+
+      // 调用真实的API
+      const response = await api.analytics.getData(params);
+      const analyticsData = response.data;
+
+      setData(analyticsData);
     } catch (error) {
       console.error('获取分析数据失败:', error);
+      message.error('获取分析数据失败，请稍后重试');
+
+      // 如果API调用失败，设置空数据而不是模拟数据
+      setData({
+        totalQueries: 0,
+        avgResponseTime: 0,
+        activeCollections: 0,
+        uniqueUsers: 0,
+        queryTrend: [],
+        collectionUsage: [],
+        recentLogs: []
+      });
     } finally {
       setLoading(false);
     }
@@ -261,18 +228,6 @@ const AnalyticsTab: React.FC = () => {
               title="总查询数"
               value={data.totalQueries}
               prefix={<SearchOutlined />}
-              suffix={
-                <Badge 
-                  count="+12.5%" 
-                  style={{ 
-                    backgroundColor: '#52c41a',
-                    fontSize: '12px',
-                    height: '20px',
-                    lineHeight: '20px',
-                    minWidth: '20px'
-                  }} 
-                />
-              }
             />
           </Card>
         </Col>

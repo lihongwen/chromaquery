@@ -18,6 +18,10 @@ import hashlib
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
+import sqlite3
+import json
+from datetime import datetime, timedelta
+import time
 from alibaba_embedding import create_alibaba_embedding_function
 from config_manager import config_manager
 from vector_optimization import (
@@ -247,6 +251,31 @@ class PathValidationResponse(BaseModel):
     valid: bool
     message: str
     path_info: Optional[PathInfoResponse] = None
+
+# 统计数据相关数据模型
+class QueryLogEntry(BaseModel):
+    id: str
+    timestamp: str
+    query: str
+    collection: str
+    results_count: int
+    response_time: float
+    status: str
+    user_id: Optional[str] = None
+
+class AnalyticsData(BaseModel):
+    totalQueries: int
+    avgResponseTime: float
+    activeCollections: int
+    uniqueUsers: int
+    queryTrend: List[dict]
+    collectionUsage: List[dict]
+    recentLogs: List[QueryLogEntry]
+
+class AnalyticsRequest(BaseModel):
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    period: Optional[str] = "7days"
 
 @app.on_event("startup")
 async def startup_event():
@@ -1627,6 +1656,149 @@ async def llm_query(request: LLMQueryRequest):
     except Exception as e:
         logger.error(f"LLM查询失败: {e}")
         raise HTTPException(status_code=500, detail=f"LLM查询失败: {str(e)}")
+
+# 统计数据API
+@app.get("/api/analytics", response_model=AnalyticsData)
+async def get_analytics_data(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    period: Optional[str] = "7days"
+):
+    """获取分析统计数据"""
+    try:
+        # 计算时间范围
+        if not end_date:
+            end_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        if not start_date:
+            if period == "7days":
+                start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+            elif period == "30days":
+                start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+            elif period == "90days":
+                start_date = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+
+        # 连接conversations数据库
+        db_path = os.path.join(os.path.dirname(__file__), 'conversations.db')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # 获取总查询数（用户消息）
+        cursor.execute("""
+            SELECT COUNT(*) FROM messages
+            WHERE type = 'user' AND timestamp BETWEEN ? AND ?
+        """, (start_date, end_date))
+        total_queries = cursor.fetchone()[0]
+
+        # 获取平均响应时间（从assistant消息中获取）
+        cursor.execute("""
+            SELECT AVG(processing_time) FROM messages
+            WHERE type = 'assistant' AND processing_time IS NOT NULL
+            AND timestamp BETWEEN ? AND ?
+        """, (start_date, end_date))
+        avg_response_time_result = cursor.fetchone()[0]
+        avg_response_time = avg_response_time_result if avg_response_time_result else 0.0
+
+        # 获取独立用户数
+        cursor.execute("""
+            SELECT COUNT(DISTINCT c.user_id) FROM conversations c
+            JOIN messages m ON c.id = m.conversation_id
+            WHERE m.timestamp BETWEEN ? AND ? AND c.user_id IS NOT NULL
+        """, (start_date, end_date))
+        unique_users_result = cursor.fetchone()[0]
+        unique_users = unique_users_result if unique_users_result else 0
+
+        # 获取查询趋势数据（按天统计）
+        cursor.execute("""
+            SELECT DATE(timestamp) as query_date, COUNT(*) as count
+            FROM messages
+            WHERE type = 'user' AND timestamp BETWEEN ? AND ?
+            GROUP BY DATE(timestamp)
+            ORDER BY query_date
+        """, (start_date, end_date))
+        query_trend_data = cursor.fetchall()
+        query_trend = [{"date": row[0], "count": row[1]} for row in query_trend_data]
+
+        # 获取最近的查询日志
+        cursor.execute("""
+            SELECT m.id, m.timestamp, m.content,
+                   COALESCE(m.selected_collections, 'null') as collections,
+                   COALESCE(m.processing_time, 0) as processing_time,
+                   c.user_id
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.type = 'user' AND m.timestamp BETWEEN ? AND ?
+            ORDER BY m.timestamp DESC
+            LIMIT 20
+        """, (start_date, end_date))
+        recent_logs_data = cursor.fetchall()
+
+        recent_logs = []
+        for row in recent_logs_data:
+            # 解析集合信息
+            collections_str = row[3]
+            try:
+                if collections_str and collections_str != 'null':
+                    collections_data = json.loads(collections_str)
+                    collection_name = collections_data[0] if isinstance(collections_data, list) and collections_data else "未知"
+                else:
+                    collection_name = "未知"
+            except:
+                collection_name = "未知"
+
+            recent_logs.append(QueryLogEntry(
+                id=row[0],
+                timestamp=row[1],
+                query=row[2][:100] + "..." if len(row[2]) > 100 else row[2],  # 限制查询内容长度
+                collection=collection_name,
+                results_count=0,  # 暂时设为0，后续可以从query_results中解析
+                response_time=row[4],
+                status="success",  # 暂时设为success，后续可以根据实际情况判断
+                user_id=row[5]
+            ))
+
+        conn.close()
+
+        # 获取ChromaDB集合信息
+        try:
+            collections = chroma_client.list_collections()
+            active_collections = len(collections)
+
+            # 计算集合使用分布（基于文档数量）
+            collection_usage = []
+            for collection in collections:
+                metadata = collection.metadata or {}
+                display_name = metadata.get('original_name', collection.name)
+                count = collection.count()
+                if count > 0:  # 只包含有文档的集合
+                    collection_usage.append({
+                        "collection": display_name,
+                        "count": count
+                    })
+
+            # 按文档数量排序
+            collection_usage.sort(key=lambda x: x["count"], reverse=True)
+
+        except Exception as e:
+            logger.warning(f"获取ChromaDB集合信息失败: {e}")
+            active_collections = 0
+            collection_usage = []
+
+        return AnalyticsData(
+            totalQueries=total_queries,
+            avgResponseTime=round(avg_response_time, 3),
+            activeCollections=active_collections,
+            uniqueUsers=unique_users,
+            queryTrend=query_trend,
+            collectionUsage=collection_usage,
+            recentLogs=recent_logs
+        )
+
+    except Exception as e:
+        logger.error(f"获取分析数据失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取分析数据失败: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

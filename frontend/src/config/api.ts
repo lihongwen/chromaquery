@@ -119,4 +119,10 @@ export const api = {
   chunking: {
     config: (method: string) => apiClient.get(`/chunking/config/${method}`),
   },
+
+  // 统计分析
+  analytics: {
+    getData: (params?: { start_date?: string; end_date?: string; period?: string }) =>
+      apiClient.get('/analytics', { params }),
+  },
 };
