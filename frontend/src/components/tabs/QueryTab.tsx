@@ -18,7 +18,9 @@ import {
   Spin,
   Empty,
   Select,
-  Tooltip
+  Tooltip,
+  Drawer,
+  FloatButton
 } from 'antd';
 import {
   SendOutlined,
@@ -28,7 +30,12 @@ import {
   EyeInvisibleOutlined,
   CopyOutlined,
   SearchOutlined,
-  DatabaseOutlined
+  DatabaseOutlined,
+  PlusOutlined,
+  MessageOutlined,
+  SettingOutlined,
+  MenuOutlined,
+  DeleteOutlined
 } from '@ant-design/icons';
 import { useResponsive } from '../../hooks/useResponsive';
 import { api } from '../../config/api';
@@ -80,6 +87,14 @@ interface QueryMessage {
   documents_found?: number;
 }
 
+// 对话相关接口
+interface Conversation {
+  id: string;
+  title: string;
+  created_at: string;
+  messages: QueryMessage[];
+}
+
 interface QueryResult {
   id: string;
   document: string;
@@ -101,7 +116,12 @@ interface CollectionInfo {
 }
 
 const QueryTab: React.FC = () => {
-  const [messages, setMessages] = useState<QueryMessage[]>([]);
+  // 对话管理状态
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // 原有状态
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [queryHistory, setQueryHistory] = useState<string[]>([]);
@@ -109,7 +129,13 @@ const QueryTab: React.FC = () => {
     similarity_threshold: 0.3,
     n_results: 10,
   });
+  
+  // 布局状态
+  const [leftDrawerVisible, setLeftDrawerVisible] = useState(false);
+  const [rightDrawerVisible, setRightDrawerVisible] = useState(false);
   const [siderCollapsed, setSiderCollapsed] = useState(false);
+  
+  // 其他状态
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
   const [showResultsList, setShowResultsList] = useState<Set<string>>(new Set());
   const [collections, setCollections] = useState<CollectionInfo[]>([]);
@@ -150,11 +176,65 @@ const QueryTab: React.FC = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [currentConversation?.messages]);
 
   useEffect(() => {
     fetchCollections();
+    loadConversations();
   }, []);
+
+  // 对话管理函数
+  const createNewConversation = useCallback(() => {
+    const newConversation: Conversation = {
+      id: `conv_${Date.now()}`,
+      title: '新对话',
+      created_at: new Date().toISOString(),
+      messages: []
+    };
+    const updatedConversations = [newConversation, ...conversations];
+    setConversations(updatedConversations);
+    setCurrentConversation(newConversation);
+    saveConversations(updatedConversations);
+  }, [conversations]);
+
+  const clearConversations = useCallback(() => {
+    setConversations([]);
+    setCurrentConversation(null);
+    localStorage.removeItem('chromadb_conversations');
+    message.success('对话历史已清空');
+  }, []);
+
+  const loadConversations = () => {
+    try {
+      const saved = localStorage.getItem('chromadb_conversations');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setConversations(parsed);
+      }
+    } catch (error) {
+      console.error('加载对话历史失败:', error);
+    }
+  };
+
+  const saveConversations = useCallback((convs: Conversation[]) => {
+    try {
+      localStorage.setItem('chromadb_conversations', JSON.stringify(convs));
+    } catch (error) {
+      console.error('保存对话历史失败:', error);
+    }
+  }, []);
+
+  // 监听对话变化自动保存
+  useEffect(() => {
+    if (conversations.length > 0) {
+      saveConversations(conversations);
+    }
+  }, [conversations, saveConversations]);
+
+  // 过滤对话列表
+  const filteredConversations = conversations.filter(conv =>
+    conv.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -196,6 +276,30 @@ const QueryTab: React.FC = () => {
       return;
     }
 
+    // 如果没有当前对话，创建一个新的
+    let conversation = currentConversation;
+    if (!conversation) {
+      conversation = {
+        id: `conv_${Date.now()}`,
+        title: query.slice(0, 20) + (query.length > 20 ? '...' : ''),
+        created_at: new Date().toISOString(),
+        messages: []
+      };
+      const updatedConversations = [conversation, ...conversations];
+      setConversations(updatedConversations);
+      setCurrentConversation(conversation);
+    } else if (conversation.title === '新对话' && conversation.messages.length === 0) {
+      // 如果是新对话且还没有消息，更新标题
+      conversation = {
+        ...conversation,
+        title: query.slice(0, 20) + (query.length > 20 ? '...' : '')
+      };
+      setCurrentConversation(conversation);
+      setConversations(prev =>
+        prev.map(conv => conv.id === conversation!.id ? conversation! : conv)
+      );
+    }
+
     const userMessage: QueryMessage = {
       id: Date.now().toString(),
       type: 'user',
@@ -204,7 +308,16 @@ const QueryTab: React.FC = () => {
       selected_collections: [...selectedCollections],
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    // 更新当前对话的消息
+    const updatedConversation = {
+      ...conversation,
+      messages: [...conversation.messages, userMessage]
+    };
+    setCurrentConversation(updatedConversation);
+    setConversations(prev =>
+      prev.map(conv => conv.id === conversation!.id ? updatedConversation : conv)
+    );
+
     setInputValue('');
     setLoading(true);
     setQueryHistory(prev => [query, ...prev.slice(0, 9)]);
@@ -222,7 +335,15 @@ const QueryTab: React.FC = () => {
       is_streaming: true,
     };
 
-    setMessages(prev => [...prev, assistantMessage]);
+    // 添加助手消息到当前对话
+    const conversationWithAssistant = {
+      ...updatedConversation,
+      messages: [...updatedConversation.messages, assistantMessage]
+    };
+    setCurrentConversation(conversationWithAssistant);
+    setConversations(prev =>
+      prev.map(conv => conv.id === conversation!.id ? conversationWithAssistant : conv)
+    );
 
     try {
       // 调用LLM查询API（流式响应）
@@ -256,8 +377,9 @@ const QueryTab: React.FC = () => {
 
                 // 处理元数据信息
                 if (data.metadata) {
-                  setMessages(prev =>
-                    prev.map(msg =>
+                  setCurrentConversation(prev => {
+                    if (!prev) return prev;
+                    const updatedMessages = prev.messages.map(msg =>
                       msg.id === assistantMessageId
                         ? {
                             ...msg,
@@ -266,16 +388,24 @@ const QueryTab: React.FC = () => {
                             content: `智能回答：（找到 ${data.metadata.documents_found} 个相关文档）`
                           }
                         : msg
-                    )
-                  );
+                    );
+                    const updatedConv = { ...prev, messages: updatedMessages };
+                    
+                    setConversations(prevConvs =>
+                      prevConvs.map(conv => conv.id === prev.id ? updatedConv : conv)
+                    );
+                    
+                    return updatedConv;
+                  });
                 }
 
                 if (data.content) {
                   accumulatedResponse += data.content;
 
                   // 更新消息内容
-                  setMessages(prev =>
-                    prev.map(msg =>
+                  setCurrentConversation(prev => {
+                    if (!prev) return prev;
+                    const updatedMessages = prev.messages.map(msg =>
                       msg.id === assistantMessageId
                         ? {
                             ...msg,
@@ -283,22 +413,37 @@ const QueryTab: React.FC = () => {
                             is_streaming: true
                           }
                         : msg
-                    )
-                  );
+                    );
+                    const updatedConv = { ...prev, messages: updatedMessages };
+                    
+                    setConversations(prevConvs =>
+                      prevConvs.map(conv => conv.id === prev.id ? updatedConv : conv)
+                    );
+                    
+                    return updatedConv;
+                  });
                 }
 
                 // 检查是否完成
                 if (data.finish_reason) {
-                  setMessages(prev =>
-                    prev.map(msg =>
+                  setCurrentConversation(prev => {
+                    if (!prev) return prev;
+                    const updatedMessages = prev.messages.map(msg =>
                       msg.id === assistantMessageId
                         ? {
                             ...msg,
                             is_streaming: false
                           }
                         : msg
-                    )
-                  );
+                    );
+                    const updatedConv = { ...prev, messages: updatedMessages };
+                    
+                    setConversations(prevConvs =>
+                      prevConvs.map(conv => conv.id === prev.id ? updatedConv : conv)
+                    );
+                    
+                    return updatedConv;
+                  });
                   break;
                 }
               } catch (e) {
@@ -327,8 +472,9 @@ const QueryTab: React.FC = () => {
       }
 
       // 更新为错误消息
-      setMessages(prev =>
-        prev.map(msg =>
+      setCurrentConversation(prev => {
+        if (!prev) return prev;
+        const updatedMessages = prev.messages.map(msg =>
           msg.id === assistantMessageId
             ? {
                 ...msg,
@@ -337,8 +483,15 @@ const QueryTab: React.FC = () => {
                 llm_response: undefined
               }
             : msg
-        )
-      );
+        );
+        const updatedConv = { ...prev, messages: updatedMessages };
+        
+        setConversations(prevConvs =>
+          prevConvs.map(conv => conv.id === prev.id ? updatedConv : conv)
+        );
+        
+        return updatedConv;
+      });
 
       message.error(errorMessage);
     } finally {
@@ -390,7 +543,7 @@ const QueryTab: React.FC = () => {
     }}>
       <div style={{ flex: 1 }}>
         <Space direction="vertical" size="small" style={{ width: '100%' }}>
-          <Tooltip title="集合选择" placement="right">
+          <Tooltip title="新建对话" placement="right">
             <div style={{
               fontSize: '18px',
               cursor: 'pointer',
@@ -400,10 +553,24 @@ const QueryTab: React.FC = () => {
             }}
             onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-            >📚</div>
+            onClick={createNewConversation}
+            >💬</div>
           </Tooltip>
           
-          <Tooltip title="查询历史" placement="right">
+          <Tooltip title="搜索对话" placement="right">
+            <div style={{
+              fontSize: '18px',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >🔍</div>
+          </Tooltip>
+
+          <Tooltip title="对话历史" placement="right">
             <div style={{
               fontSize: '18px',
               cursor: 'pointer',
@@ -415,19 +582,6 @@ const QueryTab: React.FC = () => {
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
             >📝</div>
           </Tooltip>
-
-          <Tooltip title="查询设置" placement="right">
-            <div style={{
-              fontSize: '18px',
-              cursor: 'pointer',
-              padding: '8px',
-              borderRadius: '6px',
-              transition: 'background-color 0.2s',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-tertiary)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-            >⚙️</div>
-          </Tooltip>
         </Space>
       </div>
     </div>
@@ -436,7 +590,131 @@ const QueryTab: React.FC = () => {
   // 展开状态下的侧边栏内容
   const expandedSiderContent = (
     <div style={{ padding: 16 }}>
-      <Collapse defaultActiveKey={['collections', 'history', 'settings']}>
+      {/* 新建对话按钮 */}
+      <Button
+        type="primary"
+        icon={<PlusOutlined />}
+        block
+        onClick={createNewConversation}
+        style={{
+          marginBottom: 16,
+          borderRadius: '8px',
+          height: '40px',
+          fontWeight: 600
+        }}
+      >
+        新建对话
+      </Button>
+
+      {/* 搜索对话 */}
+      <Input
+        placeholder="搜索对话..."
+        prefix={<SearchOutlined />}
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        style={{
+          marginBottom: 16,
+          borderRadius: '8px'
+        }}
+      />
+
+      {/* 对话列表 */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ 
+          fontSize: '14px', 
+          fontWeight: 600, 
+          marginBottom: 8,
+          color: 'var(--ant-color-text)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <span>过去对话</span>
+          {conversations.length > 0 && (
+            <Button
+              type="text" 
+              size="small" 
+              icon={<DeleteOutlined />}
+              onClick={clearConversations}
+              danger
+              style={{ padding: '2px 6px' }}
+            >
+              清空
+            </Button>
+          )}
+        </div>
+        
+        <List
+          size="small"
+          dataSource={filteredConversations}
+          locale={{
+            emptyText: (
+              <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                <MessageOutlined style={{ fontSize: 24, color: '#d9d9d9', marginBottom: 8 }} />
+                <div style={{ color: '#999', fontSize: '12px' }}>暂无对话历史</div>
+                <div style={{ color: '#ccc', fontSize: '11px' }}>点击"新建对话"开始查询</div>
+              </div>
+            )
+          }}
+          renderItem={(conversation) => (
+            <List.Item
+              style={{
+                cursor: 'pointer',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                backgroundColor: currentConversation?.id === conversation.id
+                  ? 'var(--ant-color-primary-bg)'
+                  : 'transparent',
+                border: currentConversation?.id === conversation.id
+                  ? '1px solid var(--ant-color-primary-border)'
+                  : '1px solid transparent',
+                marginBottom: '4px',
+                transition: 'all 0.2s ease',
+              }}
+              onClick={() => {
+                setCurrentConversation(conversation);
+                if (isMobile) {
+                  setLeftDrawerVisible(false);
+                }
+              }}
+              onMouseEnter={(e) => {
+                if (currentConversation?.id !== conversation.id) {
+                  e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-quaternary)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (currentConversation?.id !== conversation.id) {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }
+              }}
+            >
+              <List.Item.Meta
+                title={
+                  <div style={{
+                    fontSize: '13px',
+                    fontWeight: currentConversation?.id === conversation.id ? 600 : 500,
+                    color: currentConversation?.id === conversation.id 
+                      ? 'var(--ant-color-primary)' 
+                      : 'var(--ant-color-text)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {conversation.title}
+                  </div>
+                }
+                description={
+                  <div style={{ fontSize: '11px', color: 'var(--ant-color-text-tertiary)' }}>
+                    {conversation.messages.length} 条消息 · {new Date(conversation.created_at).toLocaleDateString()}
+                  </div>
+                }
+              />
+            </List.Item>
+          )}
+        />
+      </div>
+
+      <Collapse size="small" ghost>
         <Panel header="📚 集合选择" key="collections">
           <Form layout="vertical" size="small">
             <Form.Item label="选择查询集合">
@@ -628,7 +906,7 @@ const QueryTab: React.FC = () => {
               backgroundColor: 'var(--ant-color-bg-layout)',
             }}
           >
-            {messages.length === 0 ? (
+            {!currentConversation || currentConversation.messages.length === 0 ? (
               <div style={{
                 display: 'flex',
                 justifyContent: 'center',
@@ -636,27 +914,96 @@ const QueryTab: React.FC = () => {
                 height: '100%',
                 flexDirection: 'column'
               }}>
-                <Empty
-                  description={
-                    <div>
-                      <div style={{ marginBottom: 8 }}>开始您的智能查询</div>
-                      {selectedCollections.length === 0 ? (
-                        <Text type="secondary" style={{ fontSize: '12px' }}>
-                          请先在左侧选择要查询的集合
-                        </Text>
-                      ) : (
-                        <Text type="secondary" style={{ fontSize: '12px' }}>
-                          已选择 {selectedCollections.length} 个集合，可以开始查询了
-                        </Text>
-                      )}
+                <div style={{ textAlign: 'center' }}>
+                  {/* 主标题 */}
+                  <div style={{
+                    fontSize: '48px',
+                    fontWeight: 600,
+                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    marginBottom: 16
+                  }}>
+                    智能查询系统
+                  </div>
+                  
+                  {/* 副标题 */}
+                  <div style={{
+                    fontSize: '18px',
+                    color: 'var(--ant-color-text-secondary)', 
+                    marginBottom: 32
+                  }}>
+                    基于ChromaDB的智能文档检索与问答系统
+                  </div>
+
+                  {/* 功能特性 */}
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    gap: 32,
+                    marginBottom: 32,
+                    flexWrap: 'wrap'
+                  }}>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: '24px', marginBottom: 8 }}>🔍</div>
+                      <div style={{ fontSize: '14px', fontWeight: 500 }}>智能检索</div>
+                      <div style={{ fontSize: '12px', color: 'var(--ant-color-text-tertiary)' }}>语义搜索文档</div>
                     </div>
-                  }
-                  image={<SearchOutlined style={{ fontSize: 64, color: 'var(--ant-color-text-secondary)' }} />}
-                />
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: '24px', marginBottom: 8 }}>🤖</div>
+                      <div style={{ fontSize: '14px', fontWeight: 500 }}>AI问答</div>
+                      <div style={{ fontSize: '12px', color: 'var(--ant-color-text-tertiary)' }}>智能回答问题</div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: '24px', marginBottom: 8 }}>📚</div>
+                      <div style={{ fontSize: '14px', fontWeight: 500 }}>多集合</div>
+                      <div style={{ fontSize: '12px', color: 'var(--ant-color-text-tertiary)' }}>跨集合查询</div>
+                    </div>
+                  </div>
+
+                  {/* 状态提示 */}
+                  {selectedCollections.length === 0 ? (
+                    <Alert
+                      message="请先选择要查询的集合"
+                      description="在左侧边栏的集合选择区域选择一个或多个集合后即可开始查询"
+                      type="info"
+                      showIcon
+                      style={{
+                        maxWidth: 400,
+                        margin: '0 auto',
+                        textAlign: 'left'
+                      }}
+                    />
+                  ) : (
+                    <div style={{
+                      padding: '12px 16px',
+                      backgroundColor: 'var(--ant-color-success-bg)',
+                      border: '1px solid var(--ant-color-success-border)',
+                      borderRadius: '8px',
+                      maxWidth: 400,
+                      margin: '0 auto'
+                    }}>
+                      <div style={{ 
+                        color: 'var(--ant-color-success)',
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        marginBottom: 4
+                      }}>
+                        ✅ 已选择 {selectedCollections.length} 个集合
+                      </div>
+                      <div style={{ 
+                        fontSize: '12px', 
+                        color: 'var(--ant-color-text-secondary)' 
+                      }}>
+                        {selectedCollections.join(', ')}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <>
-                {messages.map((message) => (
+                {currentConversation.messages.map((message) => (
                   <div
                     key={message.id}
                     className={`message ${message.type}`}
@@ -907,20 +1254,92 @@ const QueryTab: React.FC = () => {
               />
             )}
 
-            <Input.Search
-              placeholder={selectedCollections.length > 0 ? "输入您的查询..." : "请先选择集合"}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onSearch={handleQuery}
-              enterButton={<SendOutlined />}
-              size="large"
-              loading={loading}
-              disabled={loading || selectedCollections.length === 0}
-              style={{
-                color: '#1f2937',
-                backgroundColor: '#ffffff'
-              }}
-            />
+            <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+              {/* +号按钮 */}
+              <Button
+                icon={<PlusOutlined />}
+                size="large"
+                style={{
+                  borderRadius: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '48px',
+                  height: '48px'
+                }}
+                onClick={() => {
+                  // 这里可以添加+号的功能，用户说保留后续开发
+                  message.info('附加功能开发中...');
+                }}
+              />
+
+              {/* 输入框 */}
+              <Input.Search
+                placeholder={selectedCollections.length > 0 ? "询问任何问题..." : "请先选择集合"}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onSearch={handleQuery}
+                enterButton={
+                  <Button
+                    type="primary"
+                    icon={<SendOutlined />}
+                    style={{
+                      borderRadius: '0 12px 12px 0',
+                      height: '48px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      paddingLeft: 16,
+                      paddingRight: 16
+                    }}
+                  />
+                }
+                size="large"
+                loading={loading}
+                disabled={loading || selectedCollections.length === 0}
+                style={{
+                  flex: 1,
+                  color: '#1f2937',
+                  backgroundColor: '#ffffff'
+                }}
+                styles={{
+                  input: {
+                    borderRadius: '12px 0 0 12px',
+                    height: '48px',
+                    fontSize: '16px',
+                    padding: '0 16px'
+                  }
+                }}
+                onPressEnter={(e) => {
+                  if (!e.shiftKey) {
+                    e.preventDefault();
+                    handleQuery(inputValue);
+                  }
+                }}
+              />
+
+              {/* 集合选择按钮 */}
+              <Tooltip title="选择集合">
+                <Button
+                  icon={<DatabaseOutlined />}
+                  size="large"
+                  style={{
+                    borderRadius: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '48px',
+                    height: '48px'
+                  }}
+                  onClick={() => {
+                    if (isMobile) {
+                      setRightDrawerVisible(true);
+                    } else {
+                      setSiderCollapsed(false);
+                    }
+                  }}
+                />
+              </Tooltip>
+            </div>
 
             {selectedCollections.length > 0 && (
               <div style={{ marginTop: 8, fontSize: '12px', color: 'var(--ant-color-text-secondary)' }}>
@@ -930,6 +1349,126 @@ const QueryTab: React.FC = () => {
           </div>
         </div>
       </Content>
+
+      {/* 移动端抽屉 - 对话历史 */}
+      <Drawer
+        title="对话管理"
+        placement="left"
+        onClose={() => setLeftDrawerVisible(false)}
+        open={leftDrawerVisible}
+        width={isMobile ? '85%' : 320}
+        bodyStyle={{ padding: 0 }}
+      >
+        {expandedSiderContent}
+      </Drawer>
+
+      {/* 移动端抽屉 - 集合选择 */}
+      <Drawer
+        title="集合选择"
+        placement="right" 
+        onClose={() => setRightDrawerVisible(false)}
+        open={rightDrawerVisible}
+        width={isMobile ? '90%' : 380}
+        bodyStyle={{ padding: 16 }}
+      >
+        <Form layout="vertical" size="small">
+          <Form.Item label="选择查询集合">
+            <Select
+              mode="multiple"
+              placeholder="请选择要查询的集合"
+              value={selectedCollections}
+              onChange={setSelectedCollections}
+              loading={collectionsLoading}
+              style={{ width: '100%' }}
+              maxTagCount="responsive"
+              showSearch
+              filterOption={(input, option) =>
+                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {collections.map((collection) => (
+                <Select.Option
+                  key={collection.display_name}
+                  value={collection.display_name}
+                  label={collection.display_name}
+                >
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    width: '100%'
+                  }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      flex: 1,
+                      overflow: 'hidden'
+                    }}>
+                      <DatabaseOutlined style={{ marginRight: 8, flexShrink: 0 }} />
+                      <span style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }} title={collection.display_name}>
+                        {collection.display_name}
+                      </span>
+                    </div>
+                    <Tag size="small" style={{ flexShrink: 0, marginLeft: 8 }}>
+                      {collection.count}
+                    </Tag>
+                  </div>
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          {selectedCollections.length === 0 && (
+            <Alert
+              message="请选择至少一个集合进行查询"
+              type="warning"
+              size="small"
+              showIcon
+            />
+          )}
+
+          {collections.length === 0 && !collectionsLoading && (
+            <Alert
+              message="暂无可用集合"
+              description="请先在集合管理页面创建集合，然后刷新此页面"
+              type="info"
+              size="small"
+              showIcon
+              action={
+                <Button size="small" onClick={fetchCollections}>
+                  刷新
+                </Button>
+              }
+            />
+          )}
+        </Form>
+      </Drawer>
+
+      {/* 移动端悬浮按钮组 */}
+      {isMobile && (
+        <>
+          <FloatButton.Group
+            shape="circle"
+            style={{ right: 16, bottom: 80 }}
+          >
+            <FloatButton
+              icon={<MessageOutlined />}
+              tooltip="对话管理"
+              onClick={() => setLeftDrawerVisible(true)}
+            />
+            <FloatButton
+              icon={<DatabaseOutlined />}
+              tooltip="集合选择"
+              onClick={() => setRightDrawerVisible(true)}
+            />
+          </FloatButton.Group>
+        </>
+      )}
+
     </Layout>
   );
 };

@@ -13,7 +13,7 @@ import './App.css';
 
 function AppContent() {
   const { theme } = useTheme();
-  const [activeTab, setActiveTab] = useState('collections');
+  const [activeTab, setActiveTab] = useState('query');
 
   const renderTabContent = () => {
     switch (activeTab) {
