@@ -12,7 +12,7 @@ from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 logger = logging.getLogger(__name__)
 
 
-class OllamaEmbeddingFunction(EmbeddingFunction[Documents]):
+class OllamaEmbeddingFunction(EmbeddingFunction):
     """
     Ollama嵌入函数
     支持本地运行的Ollama嵌入模型

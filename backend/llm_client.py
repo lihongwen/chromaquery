@@ -1,6 +1,6 @@
 """
 LLM客户端模块
-处理与阿里云通义千问LLM的交互
+支持多个LLM提供商（DeepSeek和阿里云通义千问）
 """
 
 import os
@@ -16,15 +16,63 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class LLMClient:
-    """阿里云通义千问LLM客户端"""
-    
-    def __init__(self):
-        self.api_key = os.getenv('DASHSCOPE_API_KEY')
-        self.model_name = 'qwen-turbo'
-        self.base_url = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation'
-        
-        if not self.api_key:
-            raise ValueError("DASHSCOPE_API_KEY环境变量未设置")
+    """多提供商LLM客户端"""
+
+    def __init__(self, provider: str = None, config: Dict = None):
+        """
+        初始化LLM客户端
+
+        Args:
+            provider: LLM提供商 ("deepseek" 或 "alibaba")
+            config: 提供商配置
+        """
+        # 如果没有提供配置，从配置管理器获取
+        if provider is None or config is None:
+            try:
+                from config_manager import ConfigManager
+                config_manager = ConfigManager()
+                current_config = config_manager.get_current_llm_config()
+                self.provider = current_config["provider"]
+                self.config = current_config["config"]
+            except Exception as e:
+                logger.warning(f"无法从配置管理器获取LLM配置，使用默认配置: {e}")
+                # 使用默认配置
+                self.provider = "alibaba"
+                self.config = {
+                    "api_key": os.getenv('DASHSCOPE_API_KEY', ''),
+                    "api_endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "model": "qwen-plus"
+                }
+        else:
+            self.provider = provider
+            self.config = config
+
+        # 验证配置
+        self._validate_config()
+
+        # 设置提供商特定的属性
+        self._setup_provider()
+
+    def _validate_config(self):
+        """验证配置"""
+        if not self.config.get("api_key"):
+            raise ValueError(f"{self.provider} API密钥未设置")
+
+        if not self.config.get("model"):
+            raise ValueError(f"{self.provider} 模型未设置")
+
+    def _setup_provider(self):
+        """设置提供商特定的属性"""
+        self.api_key = self.config["api_key"]
+        self.model_name = self.config["model"]
+        self.api_endpoint = self.config.get("api_endpoint", "")
+
+        if self.provider == "deepseek":
+            if not self.api_endpoint:
+                self.api_endpoint = "https://api.deepseek.com"
+        elif self.provider == "alibaba":
+            if not self.api_endpoint:
+                self.api_endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     
     def format_context(self, query_results: List[Dict[str, Any]], user_query: str) -> str:
         """
@@ -129,22 +177,42 @@ class LLMClient:
         ]
     
     async def stream_chat(
-        self, 
-        messages: List[Dict[str, str]], 
+        self,
+        messages: List[Dict[str, str]],
         temperature: float = 0.7,
         max_tokens: int = 2000
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         流式聊天接口
-        
+
         Args:
             messages: 消息列表
             temperature: 温度参数
             max_tokens: 最大token数
-            
+
         Yields:
             流式响应数据块
         """
+        if self.provider == "alibaba":
+            async for chunk in self._stream_chat_alibaba(messages, temperature, max_tokens):
+                yield chunk
+        elif self.provider == "deepseek":
+            async for chunk in self._stream_chat_deepseek(messages, temperature, max_tokens):
+                yield chunk
+        else:
+            yield {
+                'content': '',
+                'finish_reason': 'error',
+                'error': f'不支持的LLM提供商: {self.provider}'
+            }
+
+    async def _stream_chat_alibaba(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """阿里云通义千问流式聊天"""
         try:
             import dashscope
             from dashscope import Generation
@@ -162,7 +230,7 @@ class LLMClient:
                 'stream': False  # 使用非流式调用
             }
 
-            logger.info(f"开始LLM请求（非流式+模拟流式），模型：{self.model_name}")
+            logger.info(f"开始阿里云LLM请求，模型：{self.model_name}")
 
             # 调用非流式API
             response = Generation.call(**request_params)
@@ -198,7 +266,7 @@ class LLMClient:
                         'usage': usage
                     }
 
-                    logger.info("LLM模拟流式请求完成")
+                    logger.info("阿里云LLM请求完成")
                 else:
                     logger.warning(f"响应中没有text字段: {output}")
                     yield {
@@ -207,7 +275,7 @@ class LLMClient:
                         'error': '响应格式错误'
                     }
             else:
-                error_msg = f"LLM API调用失败，状态码：{response.status_code}"
+                error_msg = f"阿里云LLM API调用失败，状态码：{response.status_code}"
                 if hasattr(response, 'message'):
                     error_msg += f"，错误信息：{response.message}"
 
@@ -217,7 +285,7 @@ class LLMClient:
                     'finish_reason': 'error',
                     'error': error_msg
                 }
-                    
+
         except ImportError:
             error_msg = "dashscope库未安装，请运行：pip install dashscope"
             logger.error(error_msg)
@@ -227,7 +295,109 @@ class LLMClient:
                 'error': error_msg
             }
         except Exception as e:
-            error_msg = f"LLM调用异常：{str(e)}"
+            error_msg = f"阿里云LLM调用异常：{str(e)}"
+            logger.error(error_msg)
+            yield {
+                'content': '',
+                'finish_reason': 'error',
+                'error': error_msg
+            }
+
+    async def _stream_chat_deepseek(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """DeepSeek流式聊天"""
+        try:
+            import httpx
+            import json
+
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            data = {
+                "model": self.model_name,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False  # 暂时使用非流式，后续可以改为流式
+            }
+
+            logger.info(f"开始DeepSeek LLM请求，模型：{self.model_name}")
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.api_endpoint}/chat/completions",
+                    headers=headers,
+                    json=data,
+                    timeout=60.0
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    if "choices" in result and len(result["choices"]) > 0:
+                        content = result["choices"][0]["message"]["content"]
+                        usage = result.get("usage")
+
+                        logger.info(f"DeepSeek响应长度: {len(content)} 字符")
+
+                        # 模拟流式效果
+                        chunk_size = 2
+                        for i in range(0, len(content), chunk_size):
+                            chunk = content[i:i + chunk_size]
+
+                            yield {
+                                'content': chunk,
+                                'finish_reason': None,
+                                'usage': None
+                            }
+
+                            await asyncio.sleep(0.05)
+
+                        # 发送完成信号
+                        yield {
+                            'content': '',
+                            'finish_reason': 'stop',
+                            'usage': usage
+                        }
+
+                        logger.info("DeepSeek LLM请求完成")
+                    else:
+                        yield {
+                            'content': '',
+                            'finish_reason': 'error',
+                            'error': 'DeepSeek响应格式错误'
+                        }
+                else:
+                    error_msg = f"DeepSeek API调用失败，状态码：{response.status_code}"
+                    try:
+                        error_detail = response.json()
+                        if "error" in error_detail:
+                            error_msg += f"，错误信息：{error_detail['error']}"
+                    except:
+                        pass
+
+                    logger.error(error_msg)
+                    yield {
+                        'content': '',
+                        'finish_reason': 'error',
+                        'error': error_msg
+                    }
+
+        except ImportError:
+            error_msg = "httpx库未安装，请运行：pip install httpx"
+            logger.error(error_msg)
+            yield {
+                'content': '',
+                'finish_reason': 'error',
+                'error': error_msg
+            }
+        except Exception as e:
+            error_msg = f"DeepSeek LLM调用异常：{str(e)}"
             logger.error(error_msg)
             yield {
                 'content': '',
@@ -267,12 +437,16 @@ class LLMClient:
 # 全局LLM客户端实例
 llm_client = None
 
-def get_llm_client() -> LLMClient:
+def get_llm_client() -> Optional[LLMClient]:
     """获取LLM客户端实例"""
     global llm_client
-    if llm_client is None:
+    try:
+        # 每次都重新创建客户端以确保使用最新配置
         llm_client = LLMClient()
-    return llm_client
+        return llm_client
+    except Exception as e:
+        logger.error(f"获取LLM客户端失败：{e}")
+        return None
 
 def init_llm_client():
     """初始化LLM客户端"""
@@ -280,6 +454,15 @@ def init_llm_client():
     try:
         llm_client = LLMClient()
         logger.info("LLM客户端初始化成功")
+        return llm_client
     except Exception as e:
         logger.error(f"LLM客户端初始化失败：{e}")
-        raise
+        return None
+
+def create_llm_client(provider: str, config: Dict) -> Optional[LLMClient]:
+    """创建指定配置的LLM客户端"""
+    try:
+        return LLMClient(provider=provider, config=config)
+    except Exception as e:
+        logger.error(f"创建LLM客户端失败：{e}")
+        return None

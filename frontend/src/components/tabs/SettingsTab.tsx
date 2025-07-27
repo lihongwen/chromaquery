@@ -37,7 +37,9 @@ import {
   CloudOutlined,
   DesktopOutlined,
   ReloadOutlined,
-  PlayCircleOutlined
+  PlayCircleOutlined,
+  EyeOutlined,
+  EyeInvisibleOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -47,7 +49,22 @@ const { Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 
-type SettingSection = 'connection' | 'models' | 'theme' | 'notifications' | 'security' | 'advanced' | 'about';
+// 工具函数：掩码显示API密钥
+const maskApiKey = (apiKey: string): string => {
+  if (!apiKey || apiKey.length <= 8) {
+    return apiKey;
+  }
+  const start = apiKey.substring(0, 4);
+  const end = apiKey.substring(apiKey.length - 4);
+  return `${start}${'*'.repeat(Math.min(20, apiKey.length - 8))}${end}`;
+};
+
+// 工具函数：切换API密钥显示状态
+const toggleApiKeyVisibility = (key: string, visible: Record<string, boolean>, setVisible: (value: Record<string, boolean>) => void) => {
+  setVisible(prev => ({ ...prev, [key]: !prev[key] }));
+};
+
+type SettingSection = 'connection' | 'models' | 'llm' | 'theme' | 'notifications' | 'security' | 'advanced' | 'about';
 
 interface ConnectionConfig {
   serverUrl: string;
@@ -98,6 +115,30 @@ interface EmbeddingConfig {
   };
 }
 
+interface LLMModel {
+  name: string;
+  display_name: string;
+  description: string;
+  max_tokens: number;
+  recommended: boolean;
+}
+
+interface LLMProviderConfig {
+  api_key: string;
+  api_endpoint: string;
+  model: string;
+  models: LLMModel[];
+  verified: boolean;
+  last_verified?: string;
+  verification_error?: string;
+}
+
+interface LLMConfig {
+  default_provider: string;
+  deepseek?: LLMProviderConfig;
+  alibaba?: LLMProviderConfig;
+}
+
 
 
 const SettingsTab: React.FC = () => {
@@ -133,6 +174,35 @@ const SettingsTab: React.FC = () => {
       verified: false
     }
   });
+
+  // LLM配置相关状态
+  const [llmConfig, setLlmConfig] = useState<LLMConfig>({
+    default_provider: 'alibaba',
+    deepseek: {
+      api_key: '',
+      api_endpoint: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      models: [],
+      verified: false
+    },
+    alibaba: {
+      api_key: '',
+      api_endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-plus',
+      models: [],
+      verified: false
+    }
+  });
+  const [llmTesting, setLlmTesting] = useState<Record<string, boolean>>({});
+  const [llmTestResults, setLlmTestResults] = useState<Record<string, any>>({});
+
+  // API密钥显示状态
+  const [apiKeyVisible, setApiKeyVisible] = useState<Record<string, boolean>>({
+    'llm-deepseek': false,
+    'llm-alibaba': false,
+    'embedding-alibaba': false,
+    'embedding-ollama': false
+  });
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelTesting, setModelTesting] = useState(false);
   const [modelTestResult, setModelTestResult] = useState<{success: boolean; message: string} | null>(null);
@@ -158,7 +228,12 @@ const SettingsTab: React.FC = () => {
     {
       key: 'models',
       icon: <RobotOutlined />,
-      label: '模型设置',
+      label: '嵌入模型',
+    },
+    {
+      key: 'llm',
+      icon: <RobotOutlined />,
+      label: 'LLM模型',
     },
     {
       key: 'theme',
@@ -194,6 +269,11 @@ const SettingsTab: React.FC = () => {
       loadEmbeddingModels();
       loadEmbeddingConfig();
     }
+    // 当切换到LLM设置时，加载LLM数据
+    if (key === 'llm') {
+      loadLlmConfig();
+      loadLlmModels();
+    }
   };
 
   // 加载嵌入模型列表（用于设置页面，包括未验证的）
@@ -226,6 +306,13 @@ const SettingsTab: React.FC = () => {
       const response = await axios.get('/api/embedding-config');
       if (response.data.current) {
         setEmbeddingConfig(response.data.full_config);
+
+        // 如果有API密钥，设置为隐藏状态
+        setApiKeyVisible(prev => ({
+          ...prev,
+          'embedding-alibaba': false,
+          'embedding-ollama': false
+        }));
       }
     } catch (error) {
       console.error('加载模型配置失败:', error);
@@ -241,6 +328,104 @@ const SettingsTab: React.FC = () => {
     } catch (error) {
       console.error('保存模型配置失败:', error);
       message.error('保存模型配置失败');
+    }
+  };
+
+  // 加载LLM配置
+  const loadLlmConfig = async () => {
+    try {
+      const response = await axios.get('/api/llm-config');
+      if (response.data.current) {
+        setLlmConfig(response.data.full_config);
+
+        // 如果有API密钥，设置为隐藏状态
+        const config = response.data.full_config;
+        setApiKeyVisible(prev => ({
+          ...prev,
+          'llm-deepseek': false,
+          'llm-alibaba': false
+        }));
+      }
+    } catch (error) {
+      console.error('加载LLM配置失败:', error);
+      message.error('加载LLM配置失败');
+    }
+  };
+
+  // 加载LLM模型列表
+  const loadLlmModels = async () => {
+    try {
+      const response = await axios.get('/api/llm-models');
+      // 更新LLM配置中的模型列表
+      setLlmConfig(prev => ({
+        ...prev,
+        deepseek: {
+          ...prev.deepseek!,
+          models: response.data.models.deepseek || []
+        },
+        alibaba: {
+          ...prev.alibaba!,
+          models: response.data.models.alibaba || []
+        }
+      }));
+    } catch (error) {
+      console.error('加载LLM模型列表失败:', error);
+      message.error('加载LLM模型列表失败');
+    }
+  };
+
+  // 保存LLM配置
+  const saveLlmConfig = async () => {
+    try {
+      await axios.post('/api/llm-config', {
+        default_provider: llmConfig.default_provider,
+        deepseek_config: llmConfig.deepseek,
+        alibaba_config: llmConfig.alibaba
+      });
+      message.success('LLM配置已保存');
+    } catch (error) {
+      console.error('保存LLM配置失败:', error);
+      message.error('保存LLM配置失败');
+    }
+  };
+
+  // 测试LLM配置
+  const testLlmConfig = async (provider: string) => {
+    setLlmTesting(prev => ({ ...prev, [provider]: true }));
+    setLlmTestResults(prev => ({ ...prev, [provider]: null }));
+
+    try {
+      const config = provider === 'deepseek' ? llmConfig.deepseek : llmConfig.alibaba;
+      const response = await axios.post('/api/llm-config/test', {
+        provider,
+        config
+      });
+
+      setLlmTestResults(prev => ({
+        ...prev,
+        [provider]: {
+          success: response.data.success,
+          message: response.data.message
+        }
+      }));
+
+      if (response.data.success) {
+        message.success(`${provider === 'deepseek' ? 'DeepSeek' : '阿里云'} LLM测试成功！`);
+      } else {
+        message.error(`${provider === 'deepseek' ? 'DeepSeek' : '阿里云'} LLM测试失败：${response.data.message}`);
+      }
+    } catch (error) {
+      console.error(`测试${provider} LLM配置失败:`, error);
+      message.error(`测试${provider === 'deepseek' ? 'DeepSeek' : '阿里云'} LLM配置失败`);
+      setLlmTestResults(prev => ({
+        ...prev,
+        [provider]: {
+          success: false,
+          message: '网络错误或服务器异常'
+        }
+      }));
+    } finally {
+      setLlmTesting(prev => ({ ...prev, [provider]: false }));
     }
   };
 
@@ -459,13 +644,29 @@ const SettingsTab: React.FC = () => {
             }
           >
             <Input.Password
-              value={embeddingConfig.alibaba_config?.api_key}
-              onChange={(e) => setEmbeddingConfig(prev => ({
-                ...prev,
-                alibaba_config: { ...prev.alibaba_config!, api_key: e.target.value }
-              }))}
+              value={apiKeyVisible['embedding-alibaba']
+                ? embeddingConfig.alibaba_config?.api_key
+                : maskApiKey(embeddingConfig.alibaba_config?.api_key || '')}
+              onChange={(e) => {
+                // 如果当前是隐藏状态，先显示
+                if (!apiKeyVisible['embedding-alibaba']) {
+                  setApiKeyVisible(prev => ({ ...prev, 'embedding-alibaba': true }));
+                }
+                setEmbeddingConfig(prev => ({
+                  ...prev,
+                  alibaba_config: { ...prev.alibaba_config!, api_key: e.target.value }
+                }));
+              }}
               placeholder="请输入阿里云API密钥"
               style={{ width: '100%' }}
+              addonAfter={
+                <Button
+                  type="text"
+                  size="small"
+                  icon={apiKeyVisible['embedding-alibaba'] ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                  onClick={() => toggleApiKeyVisibility('embedding-alibaba', apiKeyVisible, setApiKeyVisible)}
+                />
+              }
             />
           </Form.Item>
 
@@ -734,7 +935,212 @@ const SettingsTab: React.FC = () => {
     </Card>
   );
 
+  // 渲染LLM设置
+  const renderLlmSettings = () => (
+    <div>
+      <Card title="🤖 LLM模型设置" style={{ marginBottom: 16 }}>
+        <Form layout="vertical">
+          <Form.Item label="默认LLM提供商">
+            <Radio.Group
+              value={llmConfig.default_provider}
+              onChange={(e) => setLlmConfig(prev => ({ ...prev, default_provider: e.target.value }))}
+            >
+              <Radio.Button value="alibaba">
+                <CloudOutlined /> 阿里云通义千问
+              </Radio.Button>
+              <Radio.Button value="deepseek">
+                <RobotOutlined /> DeepSeek
+              </Radio.Button>
+            </Radio.Group>
+          </Form.Item>
 
+          <Divider />
+
+          {/* 阿里云LLM配置 */}
+          <Card
+            title="阿里云通义千问配置"
+            size="small"
+            style={{ marginBottom: 16 }}
+            extra={
+              <Button
+                size="small"
+                loading={llmTesting.alibaba}
+                onClick={() => testLlmConfig('alibaba')}
+                disabled={!llmConfig.alibaba?.api_key}
+              >
+                测试连接
+              </Button>
+            }
+          >
+            <Form layout="vertical">
+              <Form.Item label="API密钥" required>
+                <Input.Password
+                  value={apiKeyVisible['llm-alibaba']
+                    ? llmConfig.alibaba?.api_key || ''
+                    : maskApiKey(llmConfig.alibaba?.api_key || '')}
+                  onChange={(e) => {
+                    // 如果当前是隐藏状态，先显示
+                    if (!apiKeyVisible['llm-alibaba']) {
+                      setApiKeyVisible(prev => ({ ...prev, 'llm-alibaba': true }));
+                    }
+                    setLlmConfig(prev => ({
+                      ...prev,
+                      alibaba: { ...prev.alibaba!, api_key: e.target.value }
+                    }));
+                  }}
+                  placeholder="请输入阿里云DashScope API密钥"
+                  addonAfter={
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={apiKeyVisible['llm-alibaba'] ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                      onClick={() => toggleApiKeyVisibility('llm-alibaba', apiKeyVisible, setApiKeyVisible)}
+                    />
+                  }
+                />
+              </Form.Item>
+
+              <Form.Item label="API端点">
+                <Input
+                  value={llmConfig.alibaba?.api_endpoint || ''}
+                  onChange={(e) => setLlmConfig(prev => ({
+                    ...prev,
+                    alibaba: { ...prev.alibaba!, api_endpoint: e.target.value }
+                  }))}
+                  placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                />
+              </Form.Item>
+
+              <Form.Item label="模型">
+                <Select
+                  value={llmConfig.alibaba?.model || ''}
+                  onChange={(value) => setLlmConfig(prev => ({
+                    ...prev,
+                    alibaba: { ...prev.alibaba!, model: value }
+                  }))}
+                  placeholder="选择模型"
+                >
+                  {llmConfig.alibaba?.models?.map((model) => (
+                    <Select.Option key={model.name} value={model.name}>
+                      <div>
+                        <strong>{model.display_name}</strong>
+                        {model.recommended && <Tag color="green" style={{ marginLeft: 8 }}>推荐</Tag>}
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          {model.description}
+                        </div>
+                      </div>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+
+              {llmTestResults.alibaba && (
+                <Alert
+                  type={llmTestResults.alibaba.success ? 'success' : 'error'}
+                  message={llmTestResults.alibaba.message}
+                  style={{ marginTop: 8 }}
+                />
+              )}
+            </Form>
+          </Card>
+
+          {/* DeepSeek配置 */}
+          <Card
+            title="DeepSeek配置"
+            size="small"
+            style={{ marginBottom: 16 }}
+            extra={
+              <Button
+                size="small"
+                loading={llmTesting.deepseek}
+                onClick={() => testLlmConfig('deepseek')}
+                disabled={!llmConfig.deepseek?.api_key}
+              >
+                测试连接
+              </Button>
+            }
+          >
+            <Form layout="vertical">
+              <Form.Item label="API密钥" required>
+                <Input.Password
+                  value={apiKeyVisible['llm-deepseek']
+                    ? llmConfig.deepseek?.api_key || ''
+                    : maskApiKey(llmConfig.deepseek?.api_key || '')}
+                  onChange={(e) => {
+                    // 如果当前是隐藏状态，先显示
+                    if (!apiKeyVisible['llm-deepseek']) {
+                      setApiKeyVisible(prev => ({ ...prev, 'llm-deepseek': true }));
+                    }
+                    setLlmConfig(prev => ({
+                      ...prev,
+                      deepseek: { ...prev.deepseek!, api_key: e.target.value }
+                    }));
+                  }}
+                  placeholder="请输入DeepSeek API密钥"
+                  addonAfter={
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={apiKeyVisible['llm-deepseek'] ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                      onClick={() => toggleApiKeyVisibility('llm-deepseek', apiKeyVisible, setApiKeyVisible)}
+                    />
+                  }
+                />
+              </Form.Item>
+
+              <Form.Item label="API端点">
+                <Input
+                  value={llmConfig.deepseek?.api_endpoint || ''}
+                  onChange={(e) => setLlmConfig(prev => ({
+                    ...prev,
+                    deepseek: { ...prev.deepseek!, api_endpoint: e.target.value }
+                  }))}
+                  placeholder="https://api.deepseek.com"
+                />
+              </Form.Item>
+
+              <Form.Item label="模型">
+                <Select
+                  value={llmConfig.deepseek?.model || ''}
+                  onChange={(value) => setLlmConfig(prev => ({
+                    ...prev,
+                    deepseek: { ...prev.deepseek!, model: value }
+                  }))}
+                  placeholder="选择模型"
+                >
+                  {llmConfig.deepseek?.models?.map((model) => (
+                    <Select.Option key={model.name} value={model.name}>
+                      <div>
+                        <strong>{model.display_name}</strong>
+                        {model.recommended && <Tag color="green" style={{ marginLeft: 8 }}>推荐</Tag>}
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          {model.description}
+                        </div>
+                      </div>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+
+              {llmTestResults.deepseek && (
+                <Alert
+                  type={llmTestResults.deepseek.success ? 'success' : 'error'}
+                  message={llmTestResults.deepseek.message}
+                  style={{ marginTop: 8 }}
+                />
+              )}
+            </Form>
+          </Card>
+
+          <Form.Item>
+            <Button type="primary" onClick={saveLlmConfig}>
+              保存LLM配置
+            </Button>
+          </Form.Item>
+        </Form>
+      </Card>
+    </div>
+  );
 
   const renderThemeSettings = () => (
     <Card title="🎨 主题外观设置">
@@ -976,6 +1382,8 @@ const SettingsTab: React.FC = () => {
         return renderConnectionSettings();
       case 'models':
         return renderModelSettings();
+      case 'llm':
+        return renderLlmSettings();
       case 'theme':
         return renderThemeSettings();
       case 'notifications':

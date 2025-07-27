@@ -3,7 +3,7 @@
   "path_history": [
     "/Users/lihongwen/Projects/chromadb/chromadb-web-manager/chroma_data"
   ],
-  "last_updated": "2025-07-27T09:49:44.422131",
+  "last_updated": "2025-07-27T16:10:53.012328",
   "max_history_count": 10,
   "embedding_config": {
     "default_provider": "ollama",
@@ -20,6 +20,58 @@
       "timeout": 60,
       "verified": true,
       "last_verified": "2025-07-27T09:24:51.685130"
+    }
+  },
+  "llm_config": {
+    "default_provider": "alibaba",
+    "deepseek": {
+      "api_key": "sk-test-deepseek-key-12345",
+      "api_endpoint": "https://api.deepseek.com",
+      "model": "deepseek-reasoner",
+      "models": [
+        {
+          "name": "deepseek-chat",
+          "display_name": "DeepSeek Chat",
+          "description": "通用对话模型，适合日常问答和文档处理",
+          "max_tokens": 4096,
+          "recommended": true
+        },
+        {
+          "name": "deepseek-reasoner",
+          "display_name": "DeepSeek Reasoner",
+          "description": "推理增强模型，适合复杂分析和逻辑推理任务",
+          "max_tokens": 8192,
+          "recommended": false
+        }
+      ]
+    },
+    "alibaba": {
+      "api_key": "sk-1dfaa0925d0e4320a0802a9f49ebe0a5",
+      "api_endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-turbo-2025-07-15",
+      "models": [
+        {
+          "name": "qwen-plus",
+          "display_name": "通义千问Plus",
+          "description": "平衡性能和成本的通用模型",
+          "max_tokens": 8192,
+          "recommended": true
+        },
+        {
+          "name": "qwen-max-latest",
+          "display_name": "通义千问Max",
+          "description": "最强性能模型，适合复杂任务",
+          "max_tokens": 8192,
+          "recommended": false
+        },
+        {
+          "name": "qwen-turbo-2025-07-15",
+          "display_name": "通义千问Turbo",
+          "description": "快速响应模型，适合简单任务",
+          "max_tokens": 8192,
+          "recommended": false
+        }
+      ]
     }
   }
 }

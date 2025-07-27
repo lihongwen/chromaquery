@@ -13,7 +13,7 @@ from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 logger = logging.getLogger(__name__)
 
 
-class AlibabaDashScopeEmbeddingFunction(EmbeddingFunction[Documents]):
+class AlibabaDashScopeEmbeddingFunction(EmbeddingFunction):
     """
     阿里云百炼平台嵌入函数
     使用text-embedding-v4模型生成1024维向量

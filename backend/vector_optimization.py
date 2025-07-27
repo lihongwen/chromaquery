@@ -68,7 +68,7 @@ def get_optimized_collection_metadata(
     
     # 向量维度配置
     metadata["vector_dimension"] = config.vector_dimension
-    metadata["optimization_enabled"] = True
+    metadata["optimization_enabled"] = "true"  # ChromaDB 0.3.29不支持布尔值，使用字符串
     metadata["chunk_strategy"] = "adaptive"
     
     logger.info(f"优化集合元数据: 距离度量={config.distance_metric}, 维度={config.vector_dimension}")

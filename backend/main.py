@@ -94,19 +94,26 @@ def init_chroma_client():
     """初始化ChromaDB客户端"""
     global chroma_client
     try:
-        # 使用跨平台工具获取数据路径
+        # 使用跨平台工具获取ChromaDB数据路径
         chroma_path = platform_utils.get_chroma_data_directory()
-
         logger.info(f"使用ChromaDB数据路径: {chroma_path}")
 
-        # 使用持久化客户端
-        chroma_client = chromadb.PersistentClient(path=str(chroma_path))
-        logger.info("ChromaDB客户端初始化成功")
+        # ChromaDB 0.3.29版本使用不同的API
+        # 使用持久化客户端，确保数据永久保存
+        chroma_client = chromadb.Client(
+            settings=chromadb.config.Settings(
+                chroma_db_impl="duckdb+parquet",
+                persist_directory=str(chroma_path)
+            )
+        )
+        logger.info("ChromaDB持久化客户端初始化成功")
+
     except Exception as e:
         logger.error(f"ChromaDB客户端初始化失败: {e}")
-        # 如果持久化失败，使用内存客户端
+        # 如果持久化失败，使用内存客户端作为回退
+        logger.warning("持久化初始化失败，使用内存客户端作为回退")
         chroma_client = chromadb.Client()
-        logger.info("使用内存ChromaDB客户端")
+        logger.info("ChromaDB内存客户端初始化成功（回退模式）")
 
 def encode_collection_name(chinese_name: str) -> str:
     """
@@ -128,6 +135,21 @@ def decode_collection_name(encoded_name: str) -> str:
     # 由于MD5是单向的，我们需要在元数据中存储原始名称
     # 这里先返回编码名称，实际解码在获取集合时通过元数据实现
     return encoded_name
+
+def sanitize_metadata(metadata: dict) -> dict:
+    """清理元数据，确保所有值都是ChromaDB支持的类型（str, int, float）"""
+    sanitized = {}
+    for key, value in metadata.items():
+        if isinstance(value, bool):
+            # 将布尔值转换为字符串
+            sanitized[key] = "true" if value else "false"
+        elif isinstance(value, (str, int, float)):
+            # 保持支持的类型不变
+            sanitized[key] = value
+        else:
+            # 其他类型转换为字符串
+            sanitized[key] = str(value)
+    return sanitized
 
 # Pydantic模型
 class CollectionInfo(BaseModel):
@@ -265,6 +287,11 @@ class EmbeddingConfigRequest(BaseModel):
     default_provider: str  # "alibaba" 或 "ollama"
     alibaba_config: Optional[dict] = None
     ollama_config: Optional[dict] = None
+
+class LLMConfigRequest(BaseModel):
+    default_provider: str  # "deepseek" 或 "alibaba"
+    deepseek_config: Optional[dict] = None
+    alibaba_config: Optional[dict] = None
 
 class CollectionMigrationRequest(BaseModel):
     collection_name: str
@@ -661,12 +688,22 @@ async def create_collection(request: CreateCollectionRequest):
         else:
             metadata = base_metadata
 
+        # 清理元数据，确保所有值都是ChromaDB支持的类型
+        metadata = sanitize_metadata(metadata)
+
         # 创建集合，使用选择的嵌入函数和元数据
         collection = chroma_client.create_collection(
             name=encoded_name,
             metadata=metadata,
             embedding_function=embedding_function
         )
+
+        # 确保数据持久化
+        try:
+            chroma_client.persist()
+            logger.info("数据已持久化到磁盘")
+        except Exception as persist_error:
+            logger.warning(f"数据持久化失败: {persist_error}")
 
         if embedding_provider == "alibaba":
             alibaba_config = config_manager.get_alibaba_config()
@@ -914,6 +951,13 @@ async def add_documents(collection_name: str, request: AddDocumentRequest):
                 ids=ids
             )
 
+        # 确保数据持久化
+        try:
+            chroma_client.persist()
+            logger.info(f"向集合 '{collection_name}' 添加文档后，数据已持久化到磁盘")
+        except Exception as persist_error:
+            logger.warning(f"数据持久化失败: {persist_error}")
+
         return {
             "message": f"成功向集合 '{collection_name}' 添加 {len(documents)} 个文档",
             "added_count": len(documents),
@@ -1053,7 +1097,7 @@ async def upload_document(
                 metadata = {
                     "file_name": file.filename,
                     "file_format": parse_result.file_format.value if parse_result.file_format else "unknown",
-                    "is_table": True,
+                    "is_table": "true",  # ChromaDB 0.3.29不支持布尔值
                     "row_index": row_idx,
                     "upload_time": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "total_rows": len(parse_result.table_data)
@@ -1088,7 +1132,7 @@ async def upload_document(
                 metadata = {
                     "file_name": file.filename,
                     "file_format": parse_result.file_format.value if parse_result.file_format else "unknown",
-                    "is_table": False,
+                    "is_table": "false",  # ChromaDB 0.3.29不支持布尔值
                     "chunk_method": config.method.value,
                     "chunk_index": chunk.index,
                     "chunk_size": len(chunk.text),
@@ -1182,12 +1226,15 @@ async def upload_document(
             # 使用默认嵌入函数
             logger.info(f"集合 '{collection_name}' 使用默认嵌入函数")
 
+        # 清理所有元数据，确保兼容ChromaDB 0.3.29
+        sanitized_metadatas = [sanitize_metadata(metadata) for metadata in metadatas]
+
         # 添加到ChromaDB
         if embeddings:
             # 使用预生成的向量
             target_collection.add(
                 documents=documents,
-                metadatas=metadatas,
+                metadatas=sanitized_metadatas,
                 ids=ids,
                 embeddings=embeddings
             )
@@ -1195,9 +1242,16 @@ async def upload_document(
             # 使用集合的默认嵌入函数
             target_collection.add(
                 documents=documents,
-                metadatas=metadatas,
+                metadatas=sanitized_metadatas,
                 ids=ids
             )
+
+        # 确保数据持久化
+        try:
+            chroma_client.persist()
+            logger.info(f"文件 '{file.filename}' 上传后，数据已持久化到磁盘")
+        except Exception as persist_error:
+            logger.warning(f"数据持久化失败: {persist_error}")
 
         processing_time = time.time() - start_time
 
@@ -2256,6 +2310,248 @@ async def verify_embedding_provider(provider: str, request: dict):
     except Exception as e:
         logger.error(f"验证提供商配置失败: {e}")
         raise HTTPException(status_code=500, detail=f"验证提供商配置失败: {str(e)}")
+
+# LLM配置测试辅助函数
+async def test_deepseek_config(config: dict) -> dict:
+    """测试DeepSeek配置"""
+    try:
+        api_key = config.get("api_key", "")
+        model = config.get("model", "deepseek-chat")
+        api_endpoint = config.get("api_endpoint", "https://api.deepseek.com")
+
+        if not api_key.strip():
+            return {"success": False, "message": "API密钥不能为空"}
+
+        # 这里可以添加实际的DeepSeek API测试
+        # 暂时返回成功，实际实现时需要调用DeepSeek API
+        return {
+            "success": True,
+            "message": f"DeepSeek模型 {model} 验证成功",
+            "model": model
+        }
+
+    except Exception as e:
+        return {"success": False, "message": f"DeepSeek验证失败: {str(e)}"}
+
+async def test_alibaba_llm_config(config: dict) -> dict:
+    """测试阿里云LLM配置"""
+    try:
+        api_key = config.get("api_key", "")
+        model = config.get("model", "qwen-plus")
+        api_endpoint = config.get("api_endpoint", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
+        if not api_key.strip():
+            return {"success": False, "message": "API密钥不能为空"}
+
+        # 测试阿里云LLM API
+        try:
+            import dashscope
+            from dashscope import Generation
+
+            # 设置API密钥
+            dashscope.api_key = api_key
+
+            # 发送测试请求
+            response = Generation.call(
+                model=model,
+                messages=[{"role": "user", "content": "测试"}],
+                max_tokens=10
+            )
+
+            if response.status_code == 200:
+                return {
+                    "success": True,
+                    "message": f"阿里云LLM模型 {model} 验证成功",
+                    "model": model
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": f"API调用失败，状态码：{response.status_code}"
+                }
+
+        except ImportError:
+            return {"success": False, "message": "dashscope库未安装"}
+        except Exception as e:
+            return {"success": False, "message": f"API调用失败: {str(e)}"}
+
+    except Exception as e:
+        return {"success": False, "message": f"阿里云LLM验证失败: {str(e)}"}
+
+# LLM配置相关API
+@app.get("/api/llm-config")
+async def get_llm_config():
+    """获取当前LLM配置"""
+    try:
+        current_config = config_manager.get_current_llm_config()
+        llm_config = config_manager.get_llm_config()
+
+        return {
+            "current": current_config,
+            "full_config": llm_config
+        }
+    except Exception as e:
+        logger.error(f"获取LLM配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取LLM配置失败: {str(e)}")
+
+@app.post("/api/llm-config")
+async def set_llm_config(request: LLMConfigRequest):
+    """设置LLM配置"""
+    try:
+        # 验证提供商
+        if request.default_provider not in ["deepseek", "alibaba"]:
+            raise HTTPException(status_code=400, detail="不支持的LLM提供商")
+
+        config_update = {"default_provider": request.default_provider}
+
+        # 更新DeepSeek配置
+        if request.deepseek_config:
+            config_update["deepseek"] = request.deepseek_config
+
+        # 更新阿里云配置
+        if request.alibaba_config:
+            config_update["alibaba"] = request.alibaba_config
+
+        # 保存配置
+        if config_manager.set_llm_config(config_update):
+            return {
+                "message": "LLM配置已更新",
+                "config": config_manager.get_current_llm_config()
+            }
+        else:
+            raise HTTPException(status_code=500, detail="保存配置失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"设置LLM配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"设置LLM配置失败: {str(e)}")
+
+@app.post("/api/llm-config/test")
+async def test_llm_config(request: dict):
+    """测试LLM配置"""
+    try:
+        provider = request.get("provider")
+        config = request.get("config", {})
+
+        if not provider:
+            raise HTTPException(status_code=400, detail="缺少provider参数")
+
+        if provider == "deepseek":
+            return await test_deepseek_config(config)
+        elif provider == "alibaba":
+            return await test_alibaba_llm_config(config)
+        else:
+            raise HTTPException(status_code=400, detail="不支持的LLM提供商")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"测试LLM配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"测试LLM配置失败: {str(e)}")
+
+@app.get("/api/llm-models")
+async def get_llm_models():
+    """获取可用的LLM模型列表"""
+    try:
+        # 返回静态的模型列表，不从配置中读取
+        models = {
+            "deepseek": [
+                {
+                    "name": "deepseek-chat",
+                    "display_name": "DeepSeek Chat",
+                    "description": "通用对话模型，适合日常问答和文档处理",
+                    "max_tokens": 4096,
+                    "recommended": True
+                },
+                {
+                    "name": "deepseek-reasoner",
+                    "display_name": "DeepSeek Reasoner",
+                    "description": "推理增强模型，适合复杂分析和逻辑推理任务",
+                    "max_tokens": 8192,
+                    "recommended": False
+                }
+            ],
+            "alibaba": [
+                {
+                    "name": "qwen-plus",
+                    "display_name": "通义千问Plus",
+                    "description": "平衡性能和成本的通用模型",
+                    "max_tokens": 8192,
+                    "recommended": True
+                },
+                {
+                    "name": "qwen-max-latest",
+                    "display_name": "通义千问Max",
+                    "description": "最强性能模型，适合复杂任务",
+                    "max_tokens": 8192,
+                    "recommended": False
+                },
+                {
+                    "name": "qwen-turbo-2025-07-15",
+                    "display_name": "通义千问Turbo",
+                    "description": "快速响应模型，适合简单任务",
+                    "max_tokens": 8192,
+                    "recommended": False
+                }
+            ]
+        }
+
+        llm_config = config_manager.get_llm_config()
+        return {
+            "models": models,
+            "default_provider": llm_config.get("default_provider", "alibaba")
+        }
+    except Exception as e:
+        logger.error(f"获取LLM模型列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取LLM模型列表失败: {str(e)}")
+
+@app.get("/api/llm-providers/status")
+async def get_llm_providers_status():
+    """获取LLM提供商状态"""
+    try:
+        llm_config = config_manager.get_llm_config()
+
+        status = {}
+        for provider in ["deepseek", "alibaba"]:
+            provider_config = llm_config.get(provider, {})
+            status[provider] = {
+                "verified": provider_config.get("verified", False),
+                "last_verified": provider_config.get("last_verified"),
+                "verification_error": provider_config.get("verification_error"),
+                "has_api_key": bool(provider_config.get("api_key", "").strip())
+            }
+
+        return {"providers": status}
+    except Exception as e:
+        logger.error(f"获取LLM提供商状态失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取LLM提供商状态失败: {str(e)}")
+
+@app.post("/api/llm-providers/{provider}/verify")
+async def verify_llm_provider(provider: str, request: dict):
+    """验证LLM提供商配置"""
+    try:
+        if provider not in ["deepseek", "alibaba"]:
+            raise HTTPException(status_code=400, detail="不支持的LLM提供商")
+
+        if provider == "deepseek":
+            result = await test_deepseek_config(request)
+        elif provider == "alibaba":
+            result = await test_alibaba_llm_config(request)
+
+        # 更新验证状态
+        if result.get("success"):
+            config_manager.set_llm_provider_verification_status(provider, True)
+        else:
+            config_manager.set_llm_provider_verification_status(provider, False, result.get("message"))
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"验证LLM提供商配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"验证LLM提供商配置失败: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

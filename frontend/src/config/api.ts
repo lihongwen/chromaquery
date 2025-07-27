@@ -144,4 +144,21 @@ export const api = {
     verifyProvider: (provider: string, data: any) =>
       apiClient.post(`/embedding-providers/${provider}/verify`, data),
   },
+
+  // LLM模型相关
+  llm: {
+    // 获取LLM配置
+    getConfig: () => apiClient.get('/llm-config'),
+    // 设置LLM配置
+    setConfig: (data: any) => apiClient.post('/llm-config', data),
+    // 测试LLM配置
+    testConfig: (data: any) => apiClient.post('/llm-config/test', data),
+    // 获取可用模型列表
+    getModels: () => apiClient.get('/llm-models'),
+    // 获取提供商状态
+    getProvidersStatus: () => apiClient.get('/llm-providers/status'),
+    // 验证提供商
+    verifyProvider: (provider: string, data: any) =>
+      apiClient.post(`/llm-providers/${provider}/verify`, data),
+  },
 };

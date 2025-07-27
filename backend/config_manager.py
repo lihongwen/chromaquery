@@ -47,6 +47,65 @@ class ConfigManager:
                     "verified": False,  # 验证状态
                     "last_verified": None  # 最后验证时间
                 }
+            },
+            # LLM模型配置
+            "llm_config": {
+                "default_provider": "alibaba",  # "deepseek" 或 "alibaba"
+                "deepseek": {
+                    "api_key": "",
+                    "api_endpoint": "https://api.deepseek.com",
+                    "model": "deepseek-chat",
+                    "models": [
+                        {
+                            "name": "deepseek-chat",
+                            "display_name": "DeepSeek Chat",
+                            "description": "通用对话模型，适合日常问答和文档处理",
+                            "max_tokens": 4096,
+                            "recommended": True
+                        },
+                        {
+                            "name": "deepseek-reasoner",
+                            "display_name": "DeepSeek Reasoner",
+                            "description": "推理增强模型，适合复杂分析和逻辑推理任务",
+                            "max_tokens": 8192,
+                            "recommended": False
+                        }
+                    ],
+                    "verified": False,
+                    "last_verified": None,
+                    "verification_error": None
+                },
+                "alibaba": {
+                    "api_key": "",
+                    "api_endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "model": "qwen-plus",
+                    "models": [
+                        {
+                            "name": "qwen-plus",
+                            "display_name": "通义千问Plus",
+                            "description": "平衡性能和成本的通用模型",
+                            "max_tokens": 8192,
+                            "recommended": True
+                        },
+                        {
+                            "name": "qwen-max-latest",
+                            "display_name": "通义千问Max",
+                            "description": "最强性能模型，适合复杂任务",
+                            "max_tokens": 8192,
+                            "recommended": False
+                        },
+                        {
+                            "name": "qwen-turbo-2025-07-15",
+                            "display_name": "通义千问Turbo",
+                            "description": "快速响应模型，适合简单任务",
+                            "max_tokens": 8192,
+                            "recommended": False
+                        }
+                    ],
+                    "verified": False,
+                    "last_verified": None,
+                    "verification_error": None
+                }
             }
         }
         
@@ -363,6 +422,125 @@ class ConfigManager:
             del provider_config["verification_error"]
 
         return self.set_embedding_config({provider: provider_config})
+
+    # LLM配置管理方法
+    def get_llm_config(self) -> Dict:
+        """获取LLM配置"""
+        return self._config.get("llm_config", {
+            "default_provider": "alibaba",
+            "deepseek": {
+                "api_key": "",
+                "api_endpoint": "https://api.deepseek.com",
+                "model": "deepseek-chat",
+                "models": [],
+                "verified": False,
+                "last_verified": None,
+                "verification_error": None
+            },
+            "alibaba": {
+                "api_key": "",
+                "api_endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model": "qwen-plus",
+                "models": [],
+                "verified": False,
+                "last_verified": None,
+                "verification_error": None
+            }
+        })
+
+    def set_llm_config(self, config: Dict) -> bool:
+        """设置LLM配置"""
+        try:
+            current_config = self.get_llm_config()
+            current_config.update(config)
+            self._config["llm_config"] = current_config
+            self._config["last_updated"] = datetime.now().isoformat()
+            return self._save_config()
+        except Exception as e:
+            logger.error(f"设置LLM配置失败: {e}")
+            return False
+
+    def get_default_llm_provider(self) -> str:
+        """获取默认LLM提供商"""
+        llm_config = self.get_llm_config()
+        return llm_config.get("default_provider", "alibaba")
+
+    def set_default_llm_provider(self, provider: str) -> bool:
+        """设置默认LLM提供商"""
+        if provider not in ["deepseek", "alibaba"]:
+            logger.error(f"不支持的LLM提供商: {provider}")
+            return False
+
+        return self.set_llm_config({"default_provider": provider})
+
+    def get_deepseek_config(self) -> Dict:
+        """获取DeepSeek配置"""
+        llm_config = self.get_llm_config()
+        return llm_config.get("deepseek", {
+            "api_key": "",
+            "api_endpoint": "https://api.deepseek.com",
+            "model": "deepseek-chat",
+            "models": [],
+            "verified": False,
+            "last_verified": None,
+            "verification_error": None
+        })
+
+    def set_deepseek_config(self, config: Dict) -> bool:
+        """设置DeepSeek配置"""
+        return self.set_llm_config({"deepseek": config})
+
+    def get_alibaba_llm_config(self) -> Dict:
+        """获取阿里云LLM配置"""
+        llm_config = self.get_llm_config()
+        return llm_config.get("alibaba", {
+            "api_key": "",
+            "api_endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen-plus",
+            "models": [],
+            "verified": False,
+            "last_verified": None,
+            "verification_error": None
+        })
+
+    def set_alibaba_llm_config(self, config: Dict) -> bool:
+        """设置阿里云LLM配置"""
+        return self.set_llm_config({"alibaba": config})
+
+    def get_current_llm_config(self) -> Dict:
+        """获取当前使用的LLM配置"""
+        provider = self.get_default_llm_provider()
+        llm_config = self.get_llm_config()
+
+        if provider == "deepseek":
+            return {
+                "provider": "deepseek",
+                "config": self.get_deepseek_config()
+            }
+        else:
+            return {
+                "provider": "alibaba",
+                "config": self.get_alibaba_llm_config()
+            }
+
+    def set_llm_provider_verification_status(self, provider: str, verified: bool, error_message: str = None) -> bool:
+        """设置LLM提供商的验证状态"""
+        if provider not in ["deepseek", "alibaba"]:
+            logger.error(f"不支持的LLM提供商: {provider}")
+            return False
+
+        current_config = self.get_llm_config()
+        provider_config = current_config.get(provider, {})
+
+        provider_config["verified"] = verified
+        provider_config["last_verified"] = datetime.now().isoformat()
+
+        if error_message:
+            provider_config["verification_error"] = error_message
+        elif "verification_error" in provider_config:
+            del provider_config["verification_error"]
+
+        return self.set_llm_config({provider: provider_config})
 
     def get_provider_verification_status(self, provider: str) -> Dict:
         """获取提供商的验证状态"""

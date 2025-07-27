@@ -63,19 +63,21 @@ class PlatformUtils:
     
     @staticmethod
     def get_data_directory(subdir: str = "") -> Path:
-        """获取数据目录路径"""
+        """获取数据目录路径 - 用于对话数据等"""
         project_root = PlatformUtils.get_project_root()
         data_dir = project_root / "data"
-        
+
         if subdir:
             data_dir = data_dir / subdir
-        
+
         return PlatformUtils.ensure_directory(data_dir)
-    
+
     @staticmethod
     def get_chroma_data_directory() -> Path:
-        """获取 ChromaDB 数据目录路径"""
-        return PlatformUtils.get_data_directory("chroma_data")
+        """获取 ChromaDB 数据目录路径 - 直接在根目录下"""
+        project_root = PlatformUtils.get_project_root()
+        chroma_dir = project_root / "chromadbdata"
+        return PlatformUtils.ensure_directory(chroma_dir)
     
     @staticmethod
     def get_config_file_path() -> Path:
