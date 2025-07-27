@@ -33,3 +33,5 @@ xlrd>=2.0.1
 markdown>=3.4.0
 beautifulsoup4>=4.12.0
 striprtf>=0.0.26
+# Windows特定依赖（可选）
+pywin32>=306; sys_platform == "win32"

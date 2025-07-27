@@ -131,16 +131,40 @@ class ConfigManager:
         try:
             config_to_save = config or self._config
             config_to_save["last_updated"] = datetime.now().isoformat()
-            
+
             # 确保配置目录存在
             platform_utils.ensure_directory(self.config_file.parent)
-            
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(config_to_save, f, indent=2, ensure_ascii=False)
-            
+
+            # Windows特殊处理：确保文件不是只读的
+            if platform_utils.get_platform_info()["is_windows"] and self.config_file.exists():
+                try:
+                    import stat
+                    self.config_file.chmod(stat.S_IWRITE | stat.S_IREAD)
+                except Exception as e:
+                    logger.warning(f"移除配置文件只读属性失败: {e}")
+
+            # 使用临时文件写入，然后原子性替换（Windows安全写入）
+            temp_config_file = self.config_file.with_suffix('.tmp')
+            try:
+                with open(temp_config_file, 'w', encoding='utf-8') as f:
+                    json.dump(config_to_save, f, indent=2, ensure_ascii=False)
+
+                # 原子性替换
+                if platform_utils.get_platform_info()["is_windows"]:
+                    # Windows下需要先删除目标文件
+                    if self.config_file.exists():
+                        self.config_file.unlink()
+                temp_config_file.replace(self.config_file)
+
+            except Exception as e:
+                # 清理临时文件
+                if temp_config_file.exists():
+                    temp_config_file.unlink()
+                raise e
+
             if config:
                 self._config = config
-            
+
             logger.info(f"配置已保存到: {self.config_file}")
             return True
         except Exception as e:
@@ -186,12 +210,18 @@ class ConfigManager:
         """验证路径有效性"""
         try:
             path_obj = Path(path)
-            
+
             # 检查路径是否为绝对路径
             if not path_obj.is_absolute():
                 logger.warning(f"路径必须是绝对路径: {path}")
                 return False
-            
+
+            # Windows特殊验证
+            if platform_utils.get_platform_info()["is_windows"]:
+                if not platform_utils.is_valid_windows_path(path):
+                    logger.error(f"路径在Windows下无效: {path}")
+                    return False
+
             # 如果路径不存在，尝试创建
             if not path_obj.exists():
                 try:
@@ -200,19 +230,26 @@ class ConfigManager:
                 except Exception as e:
                     logger.error(f"无法创建目录 {path}: {e}")
                     return False
-            
+
             # 检查是否为目录
             if not path_obj.is_dir():
                 logger.warning(f"路径不是目录: {path}")
                 return False
-            
+
             # 检查读写权限
             if not os.access(path, os.R_OK | os.W_OK):
                 logger.warning(f"路径没有读写权限: {path}")
                 return False
-            
+
+            # Windows特殊检查：确保不是只读目录
+            if platform_utils.get_platform_info()["is_windows"]:
+                permissions = platform_utils.check_file_permissions(path_obj)
+                if permissions.get("is_readonly", False):
+                    logger.error(f"目录是只读的: {path}")
+                    return False
+
             return True
-            
+
         except Exception as e:
             logger.error(f"验证路径失败 {path}: {e}")
             return False

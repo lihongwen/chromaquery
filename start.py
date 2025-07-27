@@ -101,37 +101,51 @@ class ServiceManager:
     def start_backend(self) -> bool:
         """启动后端服务"""
         self.print_info("启动后端服务...")
-        
+
         try:
             python_path = self.get_venv_python()
             backend_script = self.project_root / "backend" / "main.py"
-            
+
             if not python_path.exists():
                 self.print_error(f"Python 可执行文件不存在: {python_path}")
                 return False
-            
+
             if not backend_script.exists():
                 self.print_error(f"后端脚本不存在: {backend_script}")
                 return False
-            
+
             # 设置环境变量
             env = os.environ.copy()
             env["PYTHONPATH"] = str(self.project_root / "backend")
             env["PYTHONUNBUFFERED"] = "1"
-            
+
+            # Windows特殊处理：设置编码
+            if self.is_windows:
+                env["PYTHONIOENCODING"] = "utf-8"
+                env["PYTHONUTF8"] = "1"
+
             # 启动后端进程
+            startup_info = None
+            if self.is_windows:
+                # Windows下隐藏控制台窗口
+                startup_info = subprocess.STARTUPINFO()
+                startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startup_info.wShowWindow = subprocess.SW_HIDE
+
             self.backend_process = subprocess.Popen(
                 [str(python_path), str(backend_script)],
                 cwd=self.project_root,
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                startupinfo=startup_info,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if self.is_windows else 0
             )
-            
+
             # 等待后端启动
             time.sleep(3)
-            
+
             if self.backend_process.poll() is None:
                 self.print_success("后端服务启动成功 (http://localhost:8000)")
                 return True
@@ -140,8 +154,10 @@ class ServiceManager:
                 self.print_error("后端服务启动失败")
                 if stderr:
                     self.print_error(f"错误信息: {stderr}")
+                if stdout:
+                    self.print_info(f"输出信息: {stdout}")
                 return False
-                
+
         except Exception as e:
             self.print_error(f"启动后端服务时发生错误: {e}")
             return False
@@ -149,22 +165,40 @@ class ServiceManager:
     def start_frontend(self) -> bool:
         """启动前端服务"""
         self.print_info("启动前端服务...")
-        
+
         try:
             frontend_dir = self.project_root / "frontend"
-            
+
+            # Windows下使用npm.cmd
+            npm_cmd = "npm.cmd" if self.is_windows else "npm"
+
+            # 设置环境变量
+            env = os.environ.copy()
+            if self.is_windows:
+                env["NODE_OPTIONS"] = "--max-old-space-size=4096"
+
             # 启动前端开发服务器
+            startup_info = None
+            if self.is_windows:
+                # Windows下隐藏控制台窗口
+                startup_info = subprocess.STARTUPINFO()
+                startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startup_info.wShowWindow = subprocess.SW_HIDE
+
             self.frontend_process = subprocess.Popen(
-                ["npm", "run", "dev"],
+                [npm_cmd, "run", "dev"],
                 cwd=frontend_dir,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                startupinfo=startup_info,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if self.is_windows else 0
             )
-            
+
             # 等待前端启动
             time.sleep(5)
-            
+
             if self.frontend_process.poll() is None:
                 self.print_success("前端服务启动成功 (http://localhost:5173)")
                 return True
@@ -173,8 +207,10 @@ class ServiceManager:
                 self.print_error("前端服务启动失败")
                 if stderr:
                     self.print_error(f"错误信息: {stderr}")
+                if stdout:
+                    self.print_info(f"输出信息: {stdout}")
                 return False
-                
+
         except Exception as e:
             self.print_error(f"启动前端服务时发生错误: {e}")
             return False
@@ -195,33 +231,51 @@ class ServiceManager:
         """停止所有服务"""
         if not self.services_running:
             return
-        
+
         self.print_info("正在停止服务...")
-        
+
         # 停止后端服务
         if self.backend_process and self.backend_process.poll() is None:
             try:
-                self.backend_process.terminate()
+                if self.is_windows:
+                    # Windows下发送CTRL_BREAK_EVENT信号
+                    self.backend_process.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    self.backend_process.terminate()
+
                 self.backend_process.wait(timeout=5)
                 self.print_success("后端服务已停止")
             except subprocess.TimeoutExpired:
-                self.backend_process.kill()
-                self.print_warning("强制终止后端服务")
+                try:
+                    self.backend_process.kill()
+                    self.backend_process.wait(timeout=3)
+                    self.print_warning("强制终止后端服务")
+                except Exception as e:
+                    self.print_error(f"强制终止后端服务失败: {e}")
             except Exception as e:
                 self.print_error(f"停止后端服务时发生错误: {e}")
-        
+
         # 停止前端服务
         if self.frontend_process and self.frontend_process.poll() is None:
             try:
-                self.frontend_process.terminate()
+                if self.is_windows:
+                    # Windows下发送CTRL_BREAK_EVENT信号
+                    self.frontend_process.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    self.frontend_process.terminate()
+
                 self.frontend_process.wait(timeout=5)
                 self.print_success("前端服务已停止")
             except subprocess.TimeoutExpired:
-                self.frontend_process.kill()
-                self.print_warning("强制终止前端服务")
+                try:
+                    self.frontend_process.kill()
+                    self.frontend_process.wait(timeout=3)
+                    self.print_warning("强制终止前端服务")
+                except Exception as e:
+                    self.print_error(f"强制终止前端服务失败: {e}")
             except Exception as e:
                 self.print_error(f"停止前端服务时发生错误: {e}")
-        
+
         self.services_running = False
 
     def monitor_services(self):
