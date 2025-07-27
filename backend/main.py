@@ -941,6 +941,7 @@ async def upload_document(
 ):
     """上传文档文件并进行RAG分块处理"""
     start_time = time.time()
+    logger.info(f"开始处理文件上传: collection_name={collection_name}, file={file.filename}")
 
     try:
         # 获取RAG分块器相关类
@@ -968,9 +969,12 @@ async def upload_document(
             raise HTTPException(status_code=400, detail="文件大小不能超过 50MB")
 
         # 使用文件解析器解析文件
+        logger.info(f"开始解析文件: {file.filename}")
         parse_result = file_parser_manager.parse_file(content, file.filename)
+        logger.info(f"文件解析结果: success={parse_result.success}, is_table={parse_result.is_table}")
 
         if not parse_result.success:
+            logger.error(f"文件解析失败: {parse_result.error_message}")
             raise HTTPException(
                 status_code=400,
                 detail=f"文件解析失败: {parse_result.error_message}"
@@ -1020,11 +1024,19 @@ async def upload_document(
 
         # 处理表格文件的特殊情况
         if parse_result.is_table and parse_result.table_data:
+            logger.info(f"处理表格文件，行数: {len(parse_result.table_data)}")
+            logger.info(f"列分析结果: {parse_result.column_analysis}")
+
             # 表格文件：每行数据作为一个文档
             for row_idx, row_data in enumerate(parse_result.table_data):
                 # 构建文档内容
+                if not parse_result.column_analysis:
+                    logger.error("列分析结果为空")
+                    raise HTTPException(status_code=500, detail="表格列分析失败")
+
                 content_columns = [col for col, type_ in parse_result.column_analysis.items() if type_ == 'content']
                 metadata_columns = [col for col, type_ in parse_result.column_analysis.items() if type_ == 'metadata']
+                logger.info(f"Content列: {content_columns}, Metadata列: {metadata_columns}")
 
                 # 内容部分
                 content_parts = []
@@ -1879,7 +1891,87 @@ async def get_analytics_data(
 
 @app.get("/api/embedding-models")
 async def get_embedding_models():
-    """获取支持的嵌入模型列表"""
+    """获取已验证的嵌入模型列表（用于创建集合时的选择）"""
+    try:
+        result = {}
+
+        # 检查阿里云验证状态
+        alibaba_verified = config_manager.is_provider_configured_and_verified("alibaba")
+        if alibaba_verified:
+            result["alibaba"] = {
+                "name": "阿里云百炼",
+                "description": "阿里云百炼平台嵌入模型",
+                "models": [
+                    {
+                        "name": "text-embedding-v4",
+                        "description": "高质量嵌入模型，支持多种维度",
+                        "dimension": 1024,
+                        "available": True,
+                        "recommended": True
+                    }
+                ],
+                "available": True,
+                "verified": True
+            }
+
+        # 检查Ollama验证状态
+        ollama_verified = config_manager.is_provider_configured_and_verified("ollama")
+        if ollama_verified:
+            # 获取推荐的Ollama模型
+            recommended_models = get_recommended_models()
+
+            # 获取Ollama服务配置
+            ollama_config = config_manager.get_ollama_config()
+            ollama_base_url = ollama_config.get("base_url", "http://localhost:11434")
+
+            # 检查Ollama服务是否可用并获取实际可用的模型
+            ollama_result = OllamaEmbeddingFunction.get_available_models(ollama_base_url)
+
+            if ollama_result["success"]:
+                # 合并推荐模型和实际可用模型
+                available_embedding_models = ollama_result["embedding_models"]
+
+                # 为推荐模型添加可用状态
+                for model in recommended_models:
+                    model['available'] = any(
+                        available['name'].startswith(model['name'])
+                        for available in available_embedding_models
+                    )
+
+                # 添加实际可用但不在推荐列表中的模型
+                for available_model in available_embedding_models:
+                    model_name = available_model['name']
+                    base_name = model_name.split(':')[0]
+
+                    # 检查是否已在推荐列表中
+                    if not any(rec['name'] == base_name for rec in recommended_models):
+                        recommended_models.append({
+                            "name": model_name,
+                            "description": f"可用的嵌入模型",
+                            "dimension": None,  # 未知维度
+                            "recommended": False,
+                            "available": True
+                        })
+
+            result["ollama"] = {
+                "name": "Ollama本地模型",
+                "description": "本地运行的Ollama嵌入模型",
+                "models": recommended_models,
+                "available": ollama_result["success"],
+                "verified": True,
+                "service_url": ollama_base_url,
+                "available_models": ollama_result.get("embedding_models", []),
+                "error": ollama_result.get("error") if not ollama_result["success"] else None
+            }
+
+        return result
+    except Exception as e:
+        logger.error(f"获取嵌入模型列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取嵌入模型列表失败: {str(e)}")
+
+@app.get("/api/embedding-models/all")
+async def get_all_embedding_models():
+    """获取所有支持的嵌入模型列表（包括未验证的，用于设置页面）"""
     try:
         # 获取推荐的Ollama模型
         recommended_models = get_recommended_models()
@@ -1917,6 +2009,10 @@ async def get_embedding_models():
                         "available": True
                     })
 
+        # 获取验证状态
+        alibaba_verified = config_manager.is_provider_configured_and_verified("alibaba")
+        ollama_verified = config_manager.is_provider_configured_and_verified("ollama")
+
         return {
             "alibaba": {
                 "name": "阿里云百炼",
@@ -1930,13 +2026,15 @@ async def get_embedding_models():
                         "recommended": True
                     }
                 ],
-                "available": True
+                "available": True,
+                "verified": alibaba_verified
             },
             "ollama": {
                 "name": "Ollama本地模型",
                 "description": "本地运行的Ollama嵌入模型",
                 "models": recommended_models,
                 "available": ollama_result["success"],
+                "verified": ollama_verified,
                 "service_url": ollama_base_url,
                 "available_models": ollama_result.get("embedding_models", []),
                 "error": ollama_result.get("error") if not ollama_result["success"] else None
@@ -2043,21 +2141,21 @@ async def test_embedding_config(request: dict):
             }
 
         elif provider == "alibaba":
-            dimension = config.get("dimension", 1024)
+            from alibaba_embedding import verify_alibaba_api_key
 
-            # 创建测试嵌入函数
-            embedding_func = create_alibaba_embedding_function(dimension=dimension)
+            api_key = config.get("api_key", "")
+            model_name = config.get("model", "text-embedding-v4")
 
-            # 执行测试
-            test_text = "这是一个测试文本"
-            embeddings = embedding_func([test_text])
+            # 验证API密钥
+            result = verify_alibaba_api_key(api_key, model_name)
 
-            return {
-                "success": True,
-                "message": f"阿里云嵌入模型测试成功",
-                "vector_dimension": len(embeddings[0]) if embeddings else 0,
-                "test_text": test_text
-            }
+            # 如果验证成功，更新配置中的验证状态
+            if result["success"]:
+                config_manager.set_provider_verification_status("alibaba", True)
+            else:
+                config_manager.set_provider_verification_status("alibaba", False, result["message"])
+
+            return result
         else:
             raise HTTPException(status_code=400, detail="不支持的嵌入模型提供商")
 
@@ -2069,6 +2167,104 @@ async def test_embedding_config(request: dict):
             "success": False,
             "message": f"测试失败: {str(e)}"
         }
+
+@app.get("/api/embedding-providers/status")
+async def get_embedding_providers_status():
+    """获取所有嵌入模型提供商的验证状态"""
+    try:
+        alibaba_status = config_manager.get_provider_verification_status("alibaba")
+        ollama_status = config_manager.get_provider_verification_status("ollama")
+
+        return {
+            "alibaba": {
+                "configured": bool(config_manager.get_alibaba_config().get("api_key", "").strip()),
+                "verified": alibaba_status["verified"],
+                "last_verified": alibaba_status["last_verified"],
+                "error": alibaba_status.get("error")
+            },
+            "ollama": {
+                "configured": True,  # Ollama不需要API密钥配置
+                "verified": ollama_status["verified"],
+                "last_verified": ollama_status["last_verified"],
+                "error": ollama_status.get("error")
+            }
+        }
+    except Exception as e:
+        logger.error(f"获取提供商状态失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取提供商状态失败: {str(e)}")
+
+@app.post("/api/embedding-providers/{provider}/verify")
+async def verify_embedding_provider(provider: str, request: dict):
+    """验证特定嵌入模型提供商的配置"""
+    try:
+        if provider not in ["alibaba", "ollama"]:
+            raise HTTPException(status_code=400, detail="不支持的嵌入模型提供商")
+
+        if provider == "alibaba":
+            from alibaba_embedding import verify_alibaba_api_key
+
+            api_key = request.get("api_key", "")
+            model_name = request.get("model", "text-embedding-v4")
+
+            if not api_key.strip():
+                raise HTTPException(status_code=400, detail="API密钥不能为空")
+
+            # 验证API密钥
+            result = verify_alibaba_api_key(api_key, model_name)
+
+            # 更新配置中的验证状态
+            if result["success"]:
+                # 保存API密钥到配置
+                current_config = config_manager.get_alibaba_config()
+                current_config["api_key"] = api_key
+                current_config["model"] = model_name
+                config_manager.set_alibaba_config(current_config)
+
+                # 设置验证状态
+                config_manager.set_provider_verification_status("alibaba", True)
+            else:
+                config_manager.set_provider_verification_status("alibaba", False, result["message"])
+
+            return result
+
+        elif provider == "ollama":
+            model_name = request.get("model", "mxbai-embed-large")
+            base_url = request.get("base_url", "http://localhost:11434")
+
+            try:
+                # 测试Ollama模型
+                test_embedding_func = create_ollama_embedding_function(
+                    model_name=model_name,
+                    base_url=base_url
+                )
+                test_embedding_func(["测试"])
+
+                # 保存配置
+                current_config = config_manager.get_ollama_config()
+                current_config["model"] = model_name
+                current_config["base_url"] = base_url
+                config_manager.set_ollama_config(current_config)
+
+                # 设置验证状态
+                config_manager.set_provider_verification_status("ollama", True)
+
+                return {
+                    "success": True,
+                    "message": f"Ollama模型 {model_name} 验证成功",
+                    "model_name": model_name
+                }
+            except Exception as e:
+                config_manager.set_provider_verification_status("ollama", False, str(e))
+                return {
+                    "success": False,
+                    "message": f"Ollama模型验证失败: {str(e)}"
+                }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"验证提供商配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"验证提供商配置失败: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

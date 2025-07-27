@@ -28,16 +28,32 @@ class AlibabaDashScopeEmbeddingFunction(EmbeddingFunction[Documents]):
     ):
         """
         初始化阿里云嵌入函数
-        
+
         Args:
-            api_key: 阿里云API密钥，如果为None则从环境变量DASHSCOPE_API_KEY获取
+            api_key: 阿里云API密钥，如果为None则从配置文件或环境变量获取
             model_name: 模型名称，默认为text-embedding-v4
             dimension: 向量维度，默认为1024
             endpoint: API端点
         """
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
+        # 优先级：传入的api_key > 配置文件中的api_key > 环境变量
+        if api_key:
+            self.api_key = api_key
+        else:
+            # 尝试从配置文件获取
+            try:
+                from config_manager import config_manager
+                alibaba_config = config_manager.get_alibaba_config()
+                self.api_key = alibaba_config.get("api_key", "").strip()
+            except Exception as e:
+                logger.warning(f"无法从配置文件获取API密钥: {e}")
+                self.api_key = ""
+
+            # 如果配置文件中没有，则从环境变量获取
+            if not self.api_key:
+                self.api_key = os.getenv("DASHSCOPE_API_KEY", "")
+
         if not self.api_key:
-            raise ValueError("阿里云API密钥未设置，请设置DASHSCOPE_API_KEY环境变量或传入api_key参数")
+            raise ValueError("阿里云API密钥未设置，请在设置页面配置API密钥、设置DASHSCOPE_API_KEY环境变量或传入api_key参数")
         
         self.model_name = model_name
         self.dimension = dimension
@@ -147,11 +163,11 @@ def create_alibaba_embedding_function(
 ) -> AlibabaDashScopeEmbeddingFunction:
     """
     创建阿里云嵌入函数的便捷方法
-    
+
     Args:
         api_key: API密钥
         dimension: 向量维度
-        
+
     Returns:
         阿里云嵌入函数实例
     """
@@ -159,6 +175,84 @@ def create_alibaba_embedding_function(
         api_key=api_key,
         dimension=dimension
     )
+
+
+def verify_alibaba_api_key(api_key: str, model_name: str = "text-embedding-v4") -> dict:
+    """
+    验证阿里云API密钥是否有效
+
+    Args:
+        api_key: 要验证的API密钥
+        model_name: 模型名称
+
+    Returns:
+        验证结果字典，包含success、message等字段
+    """
+    if not api_key or not api_key.strip():
+        return {
+            "success": False,
+            "message": "API密钥不能为空"
+        }
+
+    try:
+        # 创建测试嵌入函数
+        test_embedding_func = AlibabaDashScopeEmbeddingFunction(
+            api_key=api_key.strip(),
+            model_name=model_name,
+            dimension=1024
+        )
+
+        # 执行简单的测试
+        test_text = "测试文本"
+        embeddings = test_embedding_func([test_text])
+
+        if embeddings and len(embeddings) > 0 and len(embeddings[0]) > 0:
+            return {
+                "success": True,
+                "message": f"API密钥验证成功，模型 {model_name} 可正常使用",
+                "model_name": model_name,
+                "vector_dimension": len(embeddings[0])
+            }
+        else:
+            return {
+                "success": False,
+                "message": "API密钥验证失败：返回的嵌入向量为空"
+            }
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "API密钥未设置" in error_msg:
+            return {
+                "success": False,
+                "message": "API密钥格式错误或为空"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"API密钥验证失败：{error_msg}"
+            }
+    except Exception as e:
+        error_msg = str(e)
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            return {
+                "success": False,
+                "message": "API密钥无效或已过期"
+            }
+        elif "403" in error_msg or "Forbidden" in error_msg:
+            return {
+                "success": False,
+                "message": "API密钥权限不足，请检查是否有访问该模型的权限"
+            }
+        elif "quota" in error_msg.lower() or "limit" in error_msg.lower():
+            return {
+                "success": False,
+                "message": "API配额不足或达到调用限制"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"API密钥验证失败：{error_msg}"
+            }
 
 
 

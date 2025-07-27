@@ -85,11 +85,16 @@ interface EmbeddingConfig {
   alibaba_config?: {
     model: string;
     dimension: number;
+    api_key?: string;
+    verified?: boolean;
+    last_verified?: string;
   };
   ollama_config?: {
     model: string;
     base_url: string;
     timeout: number;
+    verified?: boolean;
+    last_verified?: string;
   };
 }
 
@@ -117,17 +122,21 @@ const SettingsTab: React.FC = () => {
     default_provider: 'alibaba',
     alibaba_config: {
       model: 'text-embedding-v4',
-      dimension: 1024
+      dimension: 1024,
+      api_key: '',
+      verified: false
     },
     ollama_config: {
       model: 'mxbai-embed-large',
       base_url: 'http://localhost:11434',
-      timeout: 60
+      timeout: 60,
+      verified: false
     }
   });
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelTesting, setModelTesting] = useState(false);
   const [modelTestResult, setModelTestResult] = useState<{success: boolean; message: string} | null>(null);
+  const [verificationStatus, setVerificationStatus] = useState<Record<string, any>>({});
 
   const { theme, toggleTheme } = useTheme();
 
@@ -136,8 +145,9 @@ const SettingsTab: React.FC = () => {
     if (selectedSection === 'models') {
       loadEmbeddingModels();
       loadEmbeddingConfig();
+      loadVerificationStatus();
     }
-  }, []);
+  }, [selectedSection]);
 
   const menuItems: MenuProps['items'] = [
     {
@@ -186,17 +196,27 @@ const SettingsTab: React.FC = () => {
     }
   };
 
-  // 加载嵌入模型列表
+  // 加载嵌入模型列表（用于设置页面，包括未验证的）
   const loadEmbeddingModels = async () => {
     setModelsLoading(true);
     try {
-      const response = await axios.get('/api/embedding-models');
+      const response = await axios.get('/api/embedding-models/all');
       setEmbeddingProviders(response.data);
     } catch (error) {
       console.error('加载模型列表失败:', error);
       message.error('加载模型列表失败');
     } finally {
       setModelsLoading(false);
+    }
+  };
+
+  // 加载验证状态
+  const loadVerificationStatus = async () => {
+    try {
+      const response = await axios.get('/api/embedding-providers/status');
+      setVerificationStatus(response.data);
+    } catch (error) {
+      console.error('加载验证状态失败:', error);
     }
   };
 
@@ -252,6 +272,58 @@ const SettingsTab: React.FC = () => {
         message: '测试请求失败'
       });
       message.error('模型测试失败');
+    } finally {
+      setModelTesting(false);
+    }
+  };
+
+  // 验证提供商配置
+  const verifyProvider = async (provider: string) => {
+    setModelTesting(true);
+    setModelTestResult(null);
+
+    try {
+      let requestData: any = {};
+
+      if (provider === 'alibaba') {
+        const apiKey = embeddingConfig.alibaba_config?.api_key;
+        if (!apiKey || !apiKey.trim()) {
+          message.error('请先输入API密钥');
+          return;
+        }
+        requestData = {
+          api_key: apiKey,
+          model: embeddingConfig.alibaba_config?.model || 'text-embedding-v4'
+        };
+      } else if (provider === 'ollama') {
+        requestData = {
+          model: embeddingConfig.ollama_config?.model || 'mxbai-embed-large',
+          base_url: embeddingConfig.ollama_config?.base_url || 'http://localhost:11434'
+        };
+      }
+
+      const response = await axios.post(`/api/embedding-providers/${provider}/verify`, requestData);
+
+      setModelTestResult({
+        success: response.data.success,
+        message: response.data.message
+      });
+
+      if (response.data.success) {
+        message.success('验证成功！');
+        // 重新加载验证状态
+        await loadVerificationStatus();
+        await loadEmbeddingConfig();
+      } else {
+        message.error('验证失败');
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.detail || '验证请求失败';
+      setModelTestResult({
+        success: false,
+        message: errorMessage
+      });
+      message.error(errorMessage);
     } finally {
       setModelTesting(false);
     }
@@ -366,6 +438,37 @@ const SettingsTab: React.FC = () => {
         style={{ marginBottom: 16 }}
       >
         <Form layout="vertical">
+          <Form.Item
+            label="API密钥"
+            required
+            help={
+              <Space direction="vertical" size={4}>
+                <span>请输入阿里云百炼平台的API密钥</span>
+                {verificationStatus.alibaba?.verified && (
+                  <span style={{ color: '#52c41a' }}>
+                    ✓ 已验证 {verificationStatus.alibaba.last_verified &&
+                      `(${new Date(verificationStatus.alibaba.last_verified).toLocaleString()})`}
+                  </span>
+                )}
+                {verificationStatus.alibaba?.error && (
+                  <span style={{ color: '#ff4d4f' }}>
+                    ✗ {verificationStatus.alibaba.error}
+                  </span>
+                )}
+              </Space>
+            }
+          >
+            <Input.Password
+              value={embeddingConfig.alibaba_config?.api_key}
+              onChange={(e) => setEmbeddingConfig(prev => ({
+                ...prev,
+                alibaba_config: { ...prev.alibaba_config!, api_key: e.target.value }
+              }))}
+              placeholder="请输入阿里云API密钥"
+              style={{ width: '100%' }}
+            />
+          </Form.Item>
+
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item label="模型名称">
@@ -406,13 +509,20 @@ const SettingsTab: React.FC = () => {
           </Row>
 
           <Form.Item>
-            <Button
-              icon={<PlayCircleOutlined />}
-              loading={modelTesting}
-              onClick={() => testEmbeddingConfig('alibaba')}
-            >
-              测试阿里云模型
-            </Button>
+            <Space>
+              <Button
+                type="primary"
+                icon={<PlayCircleOutlined />}
+                loading={modelTesting}
+                onClick={() => verifyProvider('alibaba')}
+                disabled={!embeddingConfig.alibaba_config?.api_key?.trim()}
+              >
+                验证API密钥
+              </Button>
+              {verificationStatus.alibaba?.verified && (
+                <Tag color="success">已验证</Tag>
+              )}
+            </Space>
           </Form.Item>
         </Form>
       </Card>
@@ -497,14 +607,23 @@ const SettingsTab: React.FC = () => {
           </Form.Item>
 
           <Form.Item>
-            <Button
-              icon={<PlayCircleOutlined />}
-              loading={modelTesting}
-              onClick={() => testEmbeddingConfig('ollama')}
-              disabled={!embeddingProviders.ollama?.available}
-            >
-              测试Ollama模型
-            </Button>
+            <Space>
+              <Button
+                type="primary"
+                icon={<PlayCircleOutlined />}
+                loading={modelTesting}
+                onClick={() => verifyProvider('ollama')}
+                disabled={!embeddingProviders.ollama?.available}
+              >
+                验证Ollama配置
+              </Button>
+              {verificationStatus.ollama?.verified && (
+                <Tag color="success">已验证</Tag>
+              )}
+              {verificationStatus.ollama?.error && (
+                <Tag color="error">验证失败</Tag>
+              )}
+            </Space>
           </Form.Item>
         </Form>
       </Card>

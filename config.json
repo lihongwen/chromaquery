@@ -3,18 +3,23 @@
   "path_history": [
     "/Users/lihongwen/Projects/chromadb/chromadb-web-manager/chroma_data"
   ],
-  "last_updated": "2025-07-26T23:42:57.770434",
+  "last_updated": "2025-07-27T09:49:44.422131",
   "max_history_count": 10,
   "embedding_config": {
     "default_provider": "ollama",
     "alibaba": {
       "model": "text-embedding-v4",
-      "dimension": 1024
+      "dimension": 1024,
+      "verified": true,
+      "last_verified": "2025-07-27T09:49:44.422121",
+      "api_key": "sk-1dfaa0925d0e4320a0802a9f49ebe0a5"
     },
     "ollama": {
       "model": "snowflake-arctic-embed:335m",
       "base_url": "http://localhost:11434",
-      "timeout": 60
+      "timeout": 60,
+      "verified": true,
+      "last_verified": "2025-07-27T09:24:51.685130"
     }
   }
 }

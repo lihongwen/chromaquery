@@ -60,15 +60,47 @@ class LLMClient:
             similarity = (1 - result.get('distance', 0)) * 100
             collection_name = result.get('collection_name', '未知集合')
             document = result.get('document', '')
-            
+            metadata = result.get('metadata', {})
+
             # 限制单个文档的长度，避免上下文过长
-            max_doc_length = 800
+            max_doc_length = 600  # 减少document长度为metadata留出空间
             if len(document) > max_doc_length:
                 document = document[:max_doc_length] + "..."
-            
-            context_parts.append(
-                f"文档{i}（相似度：{similarity:.1f}%，来源：{collection_name}）：\n{document}\n"
-            )
+
+            # 构建文档内容部分
+            doc_content = f"文档{i}（相似度：{similarity:.1f}%，来源：{collection_name}）：\n"
+            doc_content += f"内容：{document}\n"
+
+            # 添加重要的元数据信息
+            if metadata:
+                important_metadata = []
+
+                # 提取重要的表格元数据（以table_开头的字段）
+                table_fields = {k: v for k, v in metadata.items() if k.startswith('table_') and v is not None and str(v).strip() != '' and str(v) != 'nan'}
+
+                # 选择最重要的元数据字段显示
+                priority_fields = [
+                    'table_案件编号', 'table_序号', 'table_案件标的额 （万元）', 'table_案件状态',
+                    'table_发案时间', 'table_争议解决方式', 'table_对方单位性质', 'table_是否保全',
+                    'table_保全金额（含保全财产的价值）', 'table_被诉案件实际支付金额'
+                ]
+
+                # 添加优先字段
+                for field in priority_fields:
+                    if field in table_fields:
+                        field_name = field.replace('table_', '')
+                        important_metadata.append(f"{field_name}: {table_fields[field]}")
+
+                # 添加其他重要字段（最多5个）
+                other_fields = [k for k in table_fields.keys() if k not in priority_fields][:5]
+                for field in other_fields:
+                    field_name = field.replace('table_', '')
+                    important_metadata.append(f"{field_name}: {table_fields[field]}")
+
+                if important_metadata:
+                    doc_content += f"相关数据：{' | '.join(important_metadata)}\n"
+
+            context_parts.append(doc_content)
         
         context_parts.append(f"\n用户问题：{user_query}")
         context_parts.append("\n请基于上述文档内容提供准确、有用的回答。如果文档中没有相关信息，请明确说明。请用中文回答。")

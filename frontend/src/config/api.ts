@@ -125,4 +125,23 @@ export const api = {
     getData: (params?: { start_date?: string; end_date?: string; period?: string }) =>
       apiClient.get('/analytics', { params }),
   },
+
+  // 嵌入模型相关
+  embedding: {
+    // 获取已验证的模型列表（用于创建集合）
+    getModels: () => apiClient.get('/embedding-models'),
+    // 获取所有模型列表（用于设置页面）
+    getAllModels: () => apiClient.get('/embedding-models/all'),
+    // 获取配置
+    getConfig: () => apiClient.get('/embedding-config'),
+    // 设置配置
+    setConfig: (data: any) => apiClient.post('/embedding-config', data),
+    // 测试配置
+    testConfig: (data: any) => apiClient.post('/embedding-config/test', data),
+    // 获取提供商状态
+    getProvidersStatus: () => apiClient.get('/embedding-providers/status'),
+    // 验证提供商
+    verifyProvider: (provider: string, data: any) =>
+      apiClient.post(`/embedding-providers/${provider}/verify`, data),
+  },
 };

@@ -34,12 +34,17 @@ class ConfigManager:
                 "default_provider": "alibaba",  # "alibaba" 或 "ollama"
                 "alibaba": {
                     "model": "text-embedding-v4",
-                    "dimension": 1024
+                    "dimension": 1024,
+                    "api_key": "",  # 用户配置的API密钥
+                    "verified": False,  # 验证状态
+                    "last_verified": None  # 最后验证时间
                 },
                 "ollama": {
                     "model": "mxbai-embed-large",
                     "base_url": "http://localhost:11434",
-                    "timeout": 60
+                    "timeout": 60,
+                    "verified": False,  # 验证状态
+                    "last_verified": None  # 最后验证时间
                 }
             }
         }
@@ -298,7 +303,10 @@ class ConfigManager:
         embedding_config = self.get_embedding_config()
         return embedding_config.get("alibaba", {
             "model": "text-embedding-v4",
-            "dimension": 1024
+            "dimension": 1024,
+            "api_key": "",
+            "verified": False,
+            "last_verified": None
         })
 
     def set_alibaba_config(self, config: Dict) -> bool:
@@ -311,7 +319,9 @@ class ConfigManager:
         return embedding_config.get("ollama", {
             "model": "mxbai-embed-large",
             "base_url": "http://localhost:11434",
-            "timeout": 60
+            "timeout": 60,
+            "verified": False,
+            "last_verified": None
         })
 
     def set_ollama_config(self, config: Dict) -> bool:
@@ -333,6 +343,62 @@ class ConfigManager:
                 "provider": "alibaba",
                 "config": self.get_alibaba_config()
             }
+
+    def set_provider_verification_status(self, provider: str, verified: bool, error_message: str = None) -> bool:
+        """设置提供商的验证状态"""
+        if provider not in ["alibaba", "ollama"]:
+            logger.error(f"不支持的嵌入模型提供商: {provider}")
+            return False
+
+        current_config = self.get_embedding_config()
+        provider_config = current_config.get(provider, {})
+
+        provider_config["verified"] = verified
+        provider_config["last_verified"] = datetime.now().isoformat()
+
+        if error_message:
+            provider_config["verification_error"] = error_message
+        elif "verification_error" in provider_config:
+            del provider_config["verification_error"]
+
+        return self.set_embedding_config({provider: provider_config})
+
+    def get_provider_verification_status(self, provider: str) -> Dict:
+        """获取提供商的验证状态"""
+        if provider not in ["alibaba", "ollama"]:
+            return {"verified": False, "error": "不支持的提供商"}
+
+        config = self.get_alibaba_config() if provider == "alibaba" else self.get_ollama_config()
+
+        return {
+            "verified": config.get("verified", False),
+            "last_verified": config.get("last_verified"),
+            "error": config.get("verification_error")
+        }
+
+    def get_verified_providers(self) -> List[str]:
+        """获取已验证的提供商列表"""
+        verified_providers = []
+
+        alibaba_status = self.get_provider_verification_status("alibaba")
+        if alibaba_status["verified"]:
+            verified_providers.append("alibaba")
+
+        ollama_status = self.get_provider_verification_status("ollama")
+        if ollama_status["verified"]:
+            verified_providers.append("ollama")
+
+        return verified_providers
+
+    def is_provider_configured_and_verified(self, provider: str) -> bool:
+        """检查提供商是否已配置并验证"""
+        if provider == "alibaba":
+            config = self.get_alibaba_config()
+            return bool(config.get("api_key", "").strip()) and config.get("verified", False)
+        elif provider == "ollama":
+            config = self.get_ollama_config()
+            return config.get("verified", False)
+        return False
 
 # 全局配置管理器实例
 config_manager = ConfigManager()

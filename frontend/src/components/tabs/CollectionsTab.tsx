@@ -163,6 +163,7 @@ const CollectionsTab: React.FC = () => {
   const loadEmbeddingModels = async () => {
     setModelsLoading(true);
     try {
+      // 只获取已验证的模型列表
       const response = await fetch('/api/embedding-models');
       const data = await response.json();
       setEmbeddingProviders(data);
@@ -315,9 +316,14 @@ const CollectionsTab: React.FC = () => {
       const uploadFile = file.fileList[0].originFileObj;
       const formData = new FormData();
       formData.append('file', uploadFile);
-      formData.append('chunking_method', chunkingMethod || 'recursive');
-      formData.append('chunk_size', (chunkSize || 1000).toString());
-      formData.append('chunk_overlap', (chunkOverlap || 200).toString());
+
+      // 构建分块配置JSON
+      const chunkingConfig = {
+        method: chunkingMethod || 'recursive',
+        chunk_size: chunkSize || 1000,
+        chunk_overlap: chunkOverlap || 200
+      };
+      formData.append('chunking_config', JSON.stringify(chunkingConfig));
 
       const response = await fetch(`${API_BASE_URL}/collections/${encodeURIComponent(collection)}/upload`, {
         method: 'POST',
@@ -920,6 +926,13 @@ const CollectionsTab: React.FC = () => {
             name="embedding_model"
             initialValue="default"
             tooltip="选择用于生成文档向量的嵌入模型"
+            help={
+              Object.keys(embeddingProviders).length === 0 && !modelsLoading ? (
+                <span style={{ color: '#ff4d4f' }}>
+                  暂无可用的嵌入模型，请先在设置页面配置并验证模型
+                </span>
+              ) : null
+            }
           >
             <Select
               placeholder="选择嵌入模型"
@@ -927,9 +940,21 @@ const CollectionsTab: React.FC = () => {
               loading={modelsLoading}
             >
               <Select.Option value="default">使用系统默认配置</Select.Option>
-              <Select.Option value="alibaba">阿里云百炼模型</Select.Option>
-              {embeddingProviders.ollama?.available && (
-                <Select.Option value="ollama">Ollama本地模型</Select.Option>
+              {embeddingProviders.alibaba?.verified && (
+                <Select.Option value="alibaba">
+                  <Space>
+                    阿里云百炼模型
+                    <Tag color="green" size="small">已验证</Tag>
+                  </Space>
+                </Select.Option>
+              )}
+              {embeddingProviders.ollama?.verified && embeddingProviders.ollama?.available && (
+                <Select.Option value="ollama">
+                  <Space>
+                    Ollama本地模型
+                    <Tag color="green" size="small">已验证</Tag>
+                  </Space>
+                </Select.Option>
               )}
             </Select>
           </Form.Item>

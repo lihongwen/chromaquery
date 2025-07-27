@@ -1259,87 +1259,159 @@ const QueryTab: React.FC = () => {
       {/* 移动端抽屉 - 集合选择 */}
       <Drawer
         title="集合选择"
-        placement="right" 
+        placement="right"
         onClose={() => setRightDrawerVisible(false)}
         open={rightDrawerVisible}
         width={isMobile ? '90%' : 380}
-        bodyStyle={{ padding: 16 }}
+        height="100vh"
+        bodyStyle={{
+          padding: 16,
+          height: 'calc(100vh - 55px)', // 减去header高度
+          overflow: 'auto',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+        styles={{
+          body: {
+            height: 'calc(100vh - 55px)',
+            overflow: 'auto'
+          }
+        }}
       >
-        <Form layout="vertical" size="small">
-          <Form.Item label="选择查询集合">
-            <Select
-              mode="multiple"
-              placeholder="请选择要查询的集合"
-              value={selectedCollections}
-              onChange={setSelectedCollections}
-              loading={collectionsLoading}
-              style={{ width: '100%' }}
-              maxTagCount="responsive"
-              showSearch
-              filterOption={(input, option) =>
-                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-              }
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0
+        }}>
+          <Form layout="vertical" size="small" style={{ flex: 1 }}>
+            <Form.Item
+              label="选择查询集合"
+              style={{ marginBottom: 16 }}
             >
-              {collections.map((collection) => (
-                <Select.Option
-                  key={collection.display_name}
-                  value={collection.display_name}
-                  label={collection.display_name}
-                >
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    width: '100%'
-                  }}>
+              <Select
+                mode="multiple"
+                placeholder="请选择要查询的集合"
+                value={selectedCollections}
+                onChange={setSelectedCollections}
+                loading={collectionsLoading}
+                style={{ 
+                  width: '100%',
+                  minWidth: '350px'
+                }}
+                maxTagCount="responsive"
+                showSearch
+                dropdownStyle={{
+                  maxHeight: 300,
+                  overflow: 'auto',
+                  minWidth: '320px',
+                  maxWidth: '380px',
+                  width: '100%'
+                }}
+                optionLabelProp="label"
+                getPopupContainer={(triggerNode) => triggerNode.parentElement || document.body}
+                filterOption={(input, option) =>
+                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+              >
+                {collections.map((collection) => (
+                  <Select.Option
+                    key={collection.display_name}
+                    value={collection.display_name}
+                    label={collection.display_name}
+                    title={`${collection.display_name} (${collection.count}个文档)`}
+                  >
                     <div style={{
                       display: 'flex',
+                      justifyContent: 'space-between',
                       alignItems: 'center',
-                      flex: 1,
-                      overflow: 'hidden'
+                      width: '100%',
+                      minHeight: '36px',
+                      padding: '4px 8px'
                     }}>
-                      <DatabaseOutlined style={{ marginRight: 8, flexShrink: 0 }} />
-                      <span style={{
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        flex: 1,
                         overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }} title={collection.display_name}>
-                        {collection.display_name}
-                      </span>
+                        minWidth: 0
+                      }}>
+                        <DatabaseOutlined style={{ marginRight: 8, flexShrink: 0 }} />
+                        <span style={{
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          flex: 1,
+                          lineHeight: '1.4'
+                        }} title={collection.display_name}>
+                          {collection.display_name}
+                        </span>
+                      </div>
+                      <Tag size="small" style={{ flexShrink: 0, marginLeft: 8 }}>
+                        {collection.count}
+                      </Tag>
                     </div>
-                    <Tag size="small" style={{ flexShrink: 0, marginLeft: 8 }}>
-                      {collection.count}
-                    </Tag>
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            {/* 状态提示区域 */}
+            <div style={{ marginTop: 'auto', paddingTop: 16 }}>
+              {selectedCollections.length === 0 && (
+                <Alert
+                  message="请选择至少一个集合进行查询"
+                  type="warning"
+                  size="small"
+                  showIcon
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+
+              {collections.length === 0 && !collectionsLoading && (
+                <Alert
+                  message="暂无可用集合"
+                  description="请先在集合管理页面创建集合，然后刷新此页面"
+                  type="info"
+                  size="small"
+                  showIcon
+                  action={
+                    <Button size="small" onClick={fetchCollections}>
+                      刷新
+                    </Button>
+                  }
+                />
+              )}
+
+              {/* 已选择集合的摘要 */}
+              {selectedCollections.length > 0 && (
+                <div style={{
+                  padding: 12,
+                  backgroundColor: 'var(--ant-color-success-bg)',
+                  border: '1px solid var(--ant-color-success-border)',
+                  borderRadius: 6,
+                  marginTop: 12
+                }}>
+                  <div style={{
+                    color: 'var(--ant-color-success)',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    marginBottom: 4
+                  }}>
+                    ✅ 已选择 {selectedCollections.length} 个集合
                   </div>
-                </Select.Option>
-              ))}
-            </Select>
-          </Form.Item>
-
-          {selectedCollections.length === 0 && (
-            <Alert
-              message="请选择至少一个集合进行查询"
-              type="warning"
-              size="small"
-              showIcon
-            />
-          )}
-
-          {collections.length === 0 && !collectionsLoading && (
-            <Alert
-              message="暂无可用集合"
-              description="请先在集合管理页面创建集合，然后刷新此页面"
-              type="info"
-              size="small"
-              showIcon
-              action={
-                <Button size="small" onClick={fetchCollections}>
-                  刷新
-                </Button>
-              }
-            />
-          )}
-        </Form>
+                  <div style={{
+                    fontSize: '12px',
+                    color: 'var(--ant-color-text-secondary)',
+                    wordBreak: 'break-all'
+                  }}>
+                    {selectedCollections.join(', ')}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Form>
+        </div>
       </Drawer>
 
       {/* 移动端悬浮按钮组 */}

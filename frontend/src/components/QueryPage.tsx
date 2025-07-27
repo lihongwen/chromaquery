@@ -580,19 +580,65 @@ const QueryPage: React.FC<QueryPageProps> = ({ hasCollections, onNavigateToColle
           <Select
             mode="multiple"
             placeholder="选择要查询的集合"
-            style={{ width: '100%' }}
+            style={{
+              width: '100%',
+              minWidth: '400px'
+            }}
             value={selectedCollections}
             onChange={setSelectedCollections}
             loading={collectionsLoading}
-            maxTagCount="responsive"
+            maxTagCount={1}
+            showSearch
+            dropdownStyle={{
+              maxHeight: 300,
+              overflow: 'auto',
+              minWidth: '600px',
+              width: 'auto'
+            }}
+            getPopupContainer={(triggerNode) => triggerNode.parentElement || document.body}
+            filterOption={(input, option) =>
+              (option?.children?.toString() ?? '').toLowerCase().includes(input.toLowerCase())
+            }
           >
             {collections.map(collection => (
-              <Select.Option key={collection.display_name} value={collection.display_name}>
-                <Space>
-                  <DatabaseOutlined />
-                  <span>{collection.display_name}</span>
-                  <Text type="secondary">({collection.count})</Text>
-                </Space>
+              <Select.Option
+                key={collection.display_name}
+                value={collection.display_name}
+                label={collection.display_name}
+              >
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  width: '100%',
+                  minHeight: '40px',
+                  minWidth: '500px',
+                  padding: '4px 0'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    flex: 1,
+                    overflow: 'visible',
+                    minWidth: '400px',
+                    maxWidth: 'none'
+                  }}>
+                    <DatabaseOutlined style={{ marginRight: 8, flexShrink: 0 }} />
+                    <span style={{
+                      whiteSpace: 'nowrap',
+                      overflow: 'visible',
+                      textOverflow: 'unset',
+                      flex: 1,
+                      lineHeight: '1.4',
+                      maxWidth: 'none'
+                    }} title={collection.display_name}>
+                      {collection.display_name}
+                    </span>
+                  </div>
+                  <Text type="secondary" style={{ flexShrink: 0, marginLeft: 16 }}>
+                    ({collection.count})
+                  </Text>
+                </div>
               </Select.Option>
             ))}
           </Select>

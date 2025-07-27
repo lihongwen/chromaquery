@@ -709,6 +709,7 @@ class TableFileParser(BaseFileParser):
         try:
             import pandas as pd
             import io
+            import numpy as np
 
             # 读取Excel文件
             df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl' if file_format == FileFormat.XLSX else 'xlrd')
@@ -721,6 +722,19 @@ class TableFileParser(BaseFileParser):
                     file_format=file_format,
                     success=False,
                     error_message="Excel文件为空"
+                )
+
+            # 清理数据
+            df = self._clean_excel_data(df)
+
+            # 再次检查清理后是否为空
+            if df.empty:
+                return ParseResult(
+                    content="",
+                    metadata={},
+                    file_format=file_format,
+                    success=False,
+                    error_message="Excel文件清理后为空"
                 )
 
             # 转换为字典列表
@@ -758,6 +772,61 @@ class TableFileParser(BaseFileParser):
                 success=False,
                 error_message="缺少pandas或openpyxl库，请安装相关依赖"
             )
+        except Exception as e:
+            logger.error(f"Excel解析失败: {e}")
+            return ParseResult(
+                content="",
+                metadata={},
+                file_format=file_format,
+                success=False,
+                error_message=f"解析失败: {str(e)}"
+            )
+
+    def _clean_excel_data(self, df):
+        """清理Excel数据"""
+        import pandas as pd
+        import numpy as np
+
+        # 1. 删除完全为空的行
+        df = df.dropna(how='all')
+
+        # 2. 删除完全为空的列
+        df = df.dropna(axis=1, how='all')
+
+        # 3. 清理列名
+        # 移除列名中的换行符和多余空格
+        df.columns = [str(col).replace('\n', ' ').replace('\r', ' ').strip() for col in df.columns]
+
+        # 4. 处理Unnamed列 - 如果有相邻的有意义列名，则合并
+        new_columns = []
+        for i, col in enumerate(df.columns):
+            if str(col).startswith('Unnamed'):
+                # 查找前一个有意义的列名
+                if i > 0 and not str(df.columns[i-1]).startswith('Unnamed'):
+                    # 如果这个Unnamed列有数据，则重命名为前一列的扩展
+                    if not df[col].isna().all():
+                        new_columns.append(f"{df.columns[i-1]}_详细")
+                    else:
+                        new_columns.append(col)  # 保持原名，后续删除
+                else:
+                    new_columns.append(col)
+            else:
+                new_columns.append(col)
+
+        df.columns = new_columns
+
+        # 5. 删除以"Unnamed"开头的空列
+        unnamed_cols = [col for col in df.columns if str(col).startswith('Unnamed') and df[col].isna().all()]
+        df = df.drop(columns=unnamed_cols)
+
+        # 6. 过滤掉主要内容为空的行（保留至少有3个非空值的行）
+        min_non_null = max(1, len(df.columns) // 3)  # 至少1/3的列有值
+        df = df.dropna(thresh=min_non_null)
+
+        # 7. 重置索引
+        df = df.reset_index(drop=True)
+
+        return df
 
     def _parse_csv(self, file_content: bytes) -> ParseResult:
         """解析CSV文件"""
@@ -826,56 +895,71 @@ class TableFileParser(BaseFileParser):
             )
 
     def _analyze_table_columns(self, df) -> Dict[str, str]:
-        """使用LLM智能分析表格列类型（基于完整数据样本）"""
+        """使用LLM智能分析表格列类型（基于标题行和前10行数据样本）"""
         try:
-            # 暂时直接使用简单规则分析，避免LLM调用问题
-            logger.info("使用简单规则进行列分析")
-            return self._simple_column_analysis(df)
+            logger.info("开始LLM智能列分析")
 
-            # TODO: 修复LLM调用后再启用
-            # 调用LLM分析（传入完整DataFrame）
-            # analysis_result = self._call_llm_for_column_analysis_with_data(df)
-            # if analysis_result:
-            #     return analysis_result
-            # else:
-            #     return self._simple_column_analysis(df)
+            # 调用LLM分析（传入标题行和前10行数据）
+            analysis_result = self._call_llm_for_column_analysis_with_sample_data(df)
+            if analysis_result:
+                logger.info(f"LLM列分析成功: {analysis_result}")
+                return analysis_result
+            else:
+                logger.warning("LLM列分析失败，使用简单规则分析")
+                return self._simple_column_analysis(df)
 
         except Exception as e:
             logger.warning(f"智能列分析失败，使用简单规则: {e}")
             return self._simple_column_analysis(df)
 
-    def _call_llm_for_column_analysis_with_data(self, df) -> Optional[Dict[str, str]]:
-        """调用LLM分析表格列（基于完整数据样本）"""
+    def _call_llm_for_column_analysis_with_sample_data(self, df) -> Optional[Dict[str, str]]:
+        """调用LLM分析表格列（基于标题行和前10行数据样本）"""
         try:
             from llm_client import get_llm_client
 
             llm_client = get_llm_client()
             if not llm_client:
+                logger.warning("LLM客户端不可用")
                 return None
 
-            # 构建分析提示（包含完整数据样本）
-            prompt = self._build_column_analysis_prompt_with_data(df)
+            # 构建分析提示（包含标题行和前10行数据样本）
+            prompt = self._build_column_analysis_prompt_with_sample_data(df)
 
             # 调用LLM（同步方式）
             import asyncio
             messages = [{"role": "user", "content": prompt}]
 
-            # 创建事件循环并运行异步方法
+            # 检查是否已有运行中的事件循环
             try:
-                loop = asyncio.get_event_loop()
+                # 尝试获取当前事件循环
+                loop = asyncio.get_running_loop()
+                # 如果有运行中的循环，使用 asyncio.create_task 在当前循环中运行
+                import concurrent.futures
+
+                async def collect_response():
+                    response_parts = []
+                    async for chunk in llm_client.stream_chat(messages, temperature=0.1, max_tokens=1500):
+                        if chunk.get('content'):
+                            response_parts.append(chunk['content'])
+                    return ''.join(response_parts)
+
+                # 在线程池中运行异步函数
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, collect_response())
+                    response = future.result()
+
             except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                # 没有运行中的事件循环，创建新的
+                async def collect_response():
+                    response_parts = []
+                    async for chunk in llm_client.stream_chat(messages, temperature=0.1, max_tokens=1500):
+                        if chunk.get('content'):
+                            response_parts.append(chunk['content'])
+                    return ''.join(response_parts)
 
-            # 收集流式响应
-            response_parts = []
-            async def collect_response():
-                async for chunk in llm_client.stream_chat(messages, temperature=0.1, max_tokens=1500):
-                    if chunk.get('content'):
-                        response_parts.append(chunk['content'])
+                response = asyncio.run(collect_response())
 
-            loop.run_until_complete(collect_response())
-            response = ''.join(response_parts)
+            logger.info(f"LLM分析响应: {response[:200]}...")  # 记录前200字符
 
             # 解析响应
             return self._parse_llm_column_response(response)
@@ -1014,6 +1098,60 @@ class TableFileParser(BaseFileParser):
 3. 哪些列是结构化信息，适合作为筛选条件
 
 请以JSON格式返回分析结果：
+{{
+    "列名1": "content",
+    "列名2": "metadata",
+    ...
+}}
+
+只返回JSON，不要其他解释。"""
+
+        return prompt
+
+    def _build_column_analysis_prompt_with_sample_data(self, df) -> str:
+        """构建列分析提示（基于标题行和前10行数据样本）"""
+        # 获取前10行数据作为样本
+        sample_size = min(10, len(df))
+        sample_df = df.head(sample_size)
+
+        # 构建数据样本字符串
+        data_sample = "**表格数据样本：**\n"
+        data_sample += "**标题行（列名）：** " + " | ".join(str(col) for col in df.columns) + "\n\n"
+        data_sample += "**前{}行数据：**\n".format(sample_size)
+
+        for idx, row in sample_df.iterrows():
+            row_data = []
+            for col, value in zip(df.columns, row.values):
+                if value is not None and str(value).strip():
+                    row_data.append(f"{col}: {str(value).strip()}")
+                else:
+                    row_data.append(f"{col}: [空]")
+            data_sample += f"第{idx+1}行: {' | '.join(row_data)}\n"
+
+        prompt = f"""请分析以下Excel表格的列，判断每列应该作为元数据(metadata)还是内容(content)存储到向量数据库中。
+
+**分析规则：**
+
+**content列** - 包含丰富文本信息，适合语义搜索：
+- 产品名称、标题、描述、内容、评论、摘要、说明等
+- 通常包含多个词汇，具有语义含义
+- 用户会基于这些内容进行搜索查询
+- 例如：产品描述、文章标题、用户评论等
+
+**metadata列** - 结构化信息，用于筛选和标识：
+- ID、编号、代码、分类、标签、价格、数量、时间、状态等
+- 通常是标识符、数值、分类或时间信息
+- 用于过滤和组织数据，而非语义搜索
+- 例如：产品ID、价格、分类、创建时间等
+
+{data_sample}
+
+**请基于以上标题行和数据样本进行分析，考虑：**
+1. 每列的实际内容和数据特征
+2. 哪些列包含丰富的文本信息，适合语义搜索
+3. 哪些列是结构化信息，适合作为筛选条件
+
+**请以JSON格式返回分析结果：**
 {{
     "列名1": "content",
     "列名2": "metadata",
