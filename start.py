@@ -96,7 +96,7 @@ class ServiceManager:
         if self.is_windows:
             return self.venv_path / "Scripts" / "python.exe"
         else:
-            return self.venv_path / "bin" / "python"
+            return self.venv_path / "bin" / "python3"
     
     def start_backend(self) -> bool:
         """启动后端服务"""
@@ -117,6 +117,7 @@ class ServiceManager:
             # 设置环境变量
             env = os.environ.copy()
             env["PYTHONPATH"] = str(self.project_root / "backend")
+            env["PYTHONUNBUFFERED"] = "1"
             
             # 启动后端进程
             self.backend_process = subprocess.Popen(
