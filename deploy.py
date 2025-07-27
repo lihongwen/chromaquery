@@ -221,7 +221,7 @@ class DeployManager:
                 config = json.load(f)
 
             # 设置默认路径
-            chroma_data_path = self.project_root / "chroma_data"
+            chroma_data_path = self.project_root / "chromadbdata"
             config["chroma_db_path"] = str(chroma_data_path.absolute())
             config["path_history"] = [str(chroma_data_path.absolute())]
             config["last_updated"] = ""
@@ -241,10 +241,8 @@ class DeployManager:
         self.print_step("6/7", "准备数据目录")
 
         directories = [
-            self.project_root / "chroma_data",
-            self.project_root / "data",
-            self.project_root / "data" / "chroma_data",
-            self.project_root / "backend" / "chroma_data"
+            self.project_root / "chromadbdata",
+            self.project_root / "data"
         ]
 
         try:
