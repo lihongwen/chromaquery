@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
+from platform_utils import platform_utils
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +17,10 @@ class ConfigManager:
     """配置管理器"""
     
     def __init__(self, config_file: str = "config.json"):
-        # 获取项目根目录的绝对路径
-        self.project_root = Path(__file__).parent.parent.absolute()
-        self.config_file = self.project_root / config_file
-        self.default_chroma_path = self.project_root / "chroma_data"
+        # 使用跨平台工具获取项目根目录
+        self.project_root = platform_utils.get_project_root()
+        self.config_file = platform_utils.get_config_file_path()
+        self.default_chroma_path = platform_utils.get_chroma_data_directory()
         self._config = self._load_config()
     
     def _load_config(self) -> Dict:
@@ -73,7 +74,7 @@ class ConfigManager:
             config_to_save["last_updated"] = datetime.now().isoformat()
             
             # 确保配置目录存在
-            self.config_file.parent.mkdir(parents=True, exist_ok=True)
+            platform_utils.ensure_directory(self.config_file.parent)
             
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config_to_save, f, indent=2, ensure_ascii=False)
@@ -135,7 +136,7 @@ class ConfigManager:
             # 如果路径不存在，尝试创建
             if not path_obj.exists():
                 try:
-                    path_obj.mkdir(parents=True, exist_ok=True)
+                    platform_utils.ensure_directory(path_obj)
                     logger.info(f"已创建目录: {path}")
                 except Exception as e:
                     logger.error(f"无法创建目录 {path}: {e}")

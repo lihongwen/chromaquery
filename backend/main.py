@@ -38,6 +38,7 @@ import json
 import asyncio
 from file_parsers import file_parser_manager, FileFormat
 from config_manager import config_manager
+from platform_utils import platform_utils
 
 # 延迟导入有问题的模块，避免启动时冲突
 def get_rag_chunker():
@@ -93,16 +94,8 @@ def init_chroma_client():
     """初始化ChromaDB客户端"""
     global chroma_client
     try:
-        # 使用固定的数据路径
-        import os
-        from pathlib import Path
-
-        # 获取项目根目录
-        project_root = Path(__file__).parent.parent.absolute()
-        chroma_path = project_root / "data" / "chroma_data"
-
-        # 确保目录存在
-        chroma_path.mkdir(parents=True, exist_ok=True)
+        # 使用跨平台工具获取数据路径
+        chroma_path = platform_utils.get_chroma_data_directory()
 
         logger.info(f"使用ChromaDB数据路径: {chroma_path}")
 
@@ -1767,10 +1760,8 @@ async def get_analytics_data(
             else:
                 start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
 
-        # 连接conversations数据库 - 使用固定的数据路径
-        from pathlib import Path
-        project_root = Path(__file__).parent.parent.absolute()
-        db_path = project_root / "data" / "conversations.db"
+        # 连接conversations数据库 - 使用跨平台工具
+        db_path = platform_utils.get_data_directory() / "conversations.db"
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 

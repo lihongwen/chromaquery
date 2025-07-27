@@ -31,12 +31,31 @@ env.bak/
 venv.bak/
 backend/.venv/
 
-# ChromaDB data
-backend/chroma_data/
-data/
+# ChromaDB data - 排除实际数据文件，保留目录结构
+backend/chroma_data/*
+!backend/chroma_data/.gitkeep
+data/*
+!data/.gitkeep
+chroma_data/*
+!chroma_data/.gitkeep
 *.db
 *.sqlite
 *.sqlite3
+
+# 配置文件 - 排除包含敏感信息的配置
+config.json
+backend/config.json
+.env
+.env.*
+!.env.example
+!.env.template
+
+# API 密钥和敏感信息
+**/api_key*
+**/secret*
+**/*secret*
+**/*key*
+!**/public_key*
 
 # IDE
 .vscode/
@@ -141,6 +160,32 @@ public
 # Temporary folders
 tmp/
 temp/
+.tmp/
+.temp/
+
+# 备份文件
+*.bak
+*.backup
+*~
+.#*
+#*#
+
+# 平台特定的临时文件
+# Windows
+*.tmp
+*.temp
+desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.AppleDouble
+.LSOverride
+Icon?
+
+# Linux
+.fuse_hidden*
+.directory
+.Trash-*
 
 # Logs
 logs
