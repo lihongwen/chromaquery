@@ -40,6 +40,7 @@ import {
 import { useResponsive } from '../../hooks/useResponsive';
 import { api } from '../../config/api';
 import MarkdownRenderer from '../MarkdownRenderer';
+import { roleApiService, type Role } from '../../services/roleApi';
 
 const { Sider, Content } = Layout;
 const { Panel } = Collapse;
@@ -142,6 +143,12 @@ const QueryTab: React.FC = () => {
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+
+  // 角色相关状态
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [rolesLoading, setRolesLoading] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { isMobile } = useResponsive();
 
@@ -181,6 +188,7 @@ const QueryTab: React.FC = () => {
   useEffect(() => {
     fetchCollections();
     loadConversations();
+    fetchRoles();
   }, []);
 
   // 对话管理函数
@@ -262,6 +270,20 @@ const QueryTab: React.FC = () => {
       }
     } finally {
       setCollectionsLoading(false);
+    }
+  }, []);
+
+  // 获取角色列表
+  const fetchRoles = useCallback(async () => {
+    setRolesLoading(true);
+    try {
+      const rolesList = await roleApiService.getRoles(true); // 只获取启用的角色
+      setRoles(rolesList);
+    } catch (error) {
+      console.error('获取角色列表失败:', error);
+      message.error('获取角色列表失败');
+    } finally {
+      setRolesLoading(false);
     }
   }, []);
 
@@ -351,6 +373,7 @@ const QueryTab: React.FC = () => {
         collections: selectedCollections,
         limit: settings.n_results,
         similarity_threshold: settings.similarity_threshold,
+        role_id: selectedRoleId, // 添加角色ID参数
       });
 
       if (!response.ok) {
@@ -1151,6 +1174,31 @@ const QueryTab: React.FC = () => {
                 style={{ marginBottom: 12 }}
               />
             )}
+
+            {/* 角色选择器 */}
+            <div style={{ marginBottom: 12 }}>
+              <Select
+                placeholder="选择AI角色（可选）"
+                value={selectedRoleId}
+                onChange={setSelectedRoleId}
+                allowClear
+                style={{ width: '100%' }}
+                loading={rolesLoading}
+                options={roles.map(role => ({
+                  value: role.id,
+                  label: (
+                    <div>
+                      <span style={{ fontWeight: 500 }}>{role.name}</span>
+                      {role.description && (
+                        <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
+                          {role.description}
+                        </div>
+                      )}
+                    </div>
+                  )
+                }))}
+              />
+            </div>
 
             <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
               {/* +号按钮 */}

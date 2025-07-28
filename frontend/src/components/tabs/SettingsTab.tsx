@@ -22,7 +22,11 @@ import {
   Tag,
   List,
   Badge,
-  Tooltip
+  Tooltip,
+  Table,
+  Modal,
+  Popconfirm,
+  Statistic
 } from 'antd';
 import {
   LinkOutlined,
@@ -39,15 +43,23 @@ import {
   ReloadOutlined,
   PlayCircleOutlined,
   EyeOutlined,
-  EyeInvisibleOutlined
+  EyeInvisibleOutlined,
+  UserOutlined,
+  PlusOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  MessageOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 import { useTheme } from '../../contexts/ThemeContext';
 import type { MenuProps } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import { roleApiService, type Role, type CreateRoleRequest, type UpdateRoleRequest } from '../../services/roleApi';
 
 const { Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
+const { TextArea } = Input;
 
 // 工具函数：掩码显示API密钥
 const maskApiKey = (apiKey: string): string => {
@@ -64,7 +76,7 @@ const toggleApiKeyVisibility = (key: string, visible: Record<string, boolean>, s
   setVisible(prev => ({ ...prev, [key]: !prev[key] }));
 };
 
-type SettingSection = 'connection' | 'models' | 'llm' | 'theme' | 'notifications' | 'security' | 'advanced' | 'about';
+type SettingSection = 'connection' | 'models' | 'llm' | 'roles' | 'theme' | 'notifications' | 'security' | 'advanced' | 'about';
 
 interface ConnectionConfig {
   serverUrl: string;
@@ -208,6 +220,15 @@ const SettingsTab: React.FC = () => {
   const [modelTestResult, setModelTestResult] = useState<{success: boolean; message: string} | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<Record<string, any>>({});
 
+  // 角色管理相关状态
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [rolesLoading, setRolesLoading] = useState(false);
+  const [roleModalVisible, setRoleModalVisible] = useState(false);
+  const [editingRole, setEditingRole] = useState<Role | null>(null);
+  const [viewModalVisible, setViewModalVisible] = useState(false);
+  const [viewingRole, setViewingRole] = useState<Role | null>(null);
+  const [roleForm] = Form.useForm();
+
   const { theme, toggleTheme } = useTheme();
 
   // 组件加载时初始化数据
@@ -216,6 +237,8 @@ const SettingsTab: React.FC = () => {
       loadEmbeddingModels();
       loadEmbeddingConfig();
       loadVerificationStatus();
+    } else if (selectedSection === 'roles') {
+      loadRoles();
     }
   }, [selectedSection]);
 
@@ -234,6 +257,11 @@ const SettingsTab: React.FC = () => {
       key: 'llm',
       icon: <RobotOutlined />,
       label: 'LLM模型',
+    },
+    {
+      key: 'roles',
+      icon: <UserOutlined />,
+      label: '角色管理',
     },
     {
       key: 'theme',
@@ -273,6 +301,10 @@ const SettingsTab: React.FC = () => {
     if (key === 'llm') {
       loadLlmConfig();
       loadLlmModels();
+    }
+    // 当切换到角色管理时，加载角色数据
+    if (key === 'roles') {
+      loadRoles();
     }
   };
 
@@ -542,6 +574,68 @@ const SettingsTab: React.FC = () => {
   const handleSaveSettings = () => {
     // TODO: 实现保存设置逻辑
     message.success('设置已保存');
+  };
+
+  // 角色管理相关函数
+  const loadRoles = async () => {
+    setRolesLoading(true);
+    try {
+      const data = await roleApiService.getRoles();
+      setRoles(data);
+    } catch (error) {
+      message.error('加载角色列表失败');
+    } finally {
+      setRolesLoading(false);
+    }
+  };
+
+  const handleCreateRole = () => {
+    setEditingRole(null);
+    roleForm.resetFields();
+    roleForm.setFieldsValue({ is_active: true });
+    setRoleModalVisible(true);
+  };
+
+  const handleEditRole = (role: Role) => {
+    setEditingRole(role);
+    roleForm.setFieldsValue(role);
+    setRoleModalVisible(true);
+  };
+
+  const handleViewRole = (role: Role) => {
+    setViewingRole(role);
+    setViewModalVisible(true);
+  };
+
+  const handleDeleteRole = async (roleId: string) => {
+    try {
+      await roleApiService.deleteRole(roleId);
+      message.success('删除角色成功');
+      loadRoles();
+    } catch (error) {
+      message.error('删除角色失败');
+    }
+  };
+
+  const handleSubmitRole = async () => {
+    try {
+      const values = await roleForm.validateFields();
+
+      if (editingRole) {
+        // 更新角色
+        await roleApiService.updateRole(editingRole.id, values as UpdateRoleRequest);
+        message.success('更新角色成功');
+      } else {
+        // 创建角色
+        await roleApiService.createRole(values as CreateRoleRequest);
+        message.success('创建角色成功');
+      }
+
+      setRoleModalVisible(false);
+      loadRoles();
+    } catch (error) {
+      message.error(editingRole ? '更新角色失败' : '创建角色失败');
+    }
   };
 
 
@@ -1320,6 +1414,260 @@ const SettingsTab: React.FC = () => {
     </Card>
   );
 
+  // 渲染角色管理
+  const renderRoleSettings = () => {
+    const columns: ColumnsType<Role> = [
+      {
+        title: '角色名称',
+        dataIndex: 'name',
+        key: 'name',
+        render: (text: string, record: Role) => (
+          <Space>
+            <UserOutlined />
+            <span style={{ fontWeight: 500 }}>{text}</span>
+            {!record.is_active && <Tag color="default">已禁用</Tag>}
+          </Space>
+        ),
+      },
+      {
+        title: '描述',
+        dataIndex: 'description',
+        key: 'description',
+        ellipsis: true,
+        render: (text: string) => text || '-',
+      },
+      {
+        title: '状态',
+        dataIndex: 'is_active',
+        key: 'is_active',
+        width: 100,
+        render: (active: boolean) => (
+          <Tag color={active ? 'success' : 'default'}>
+            {active ? '启用' : '禁用'}
+          </Tag>
+        ),
+      },
+      {
+        title: '创建时间',
+        dataIndex: 'created_at',
+        key: 'created_at',
+        width: 180,
+        render: (date: string) => new Date(date).toLocaleString(),
+      },
+      {
+        title: '操作',
+        key: 'actions',
+        width: 200,
+        render: (_, record: Role) => (
+          <Space>
+            <Tooltip title="查看详情">
+              <Button
+                type="text"
+                icon={<EyeOutlined />}
+                onClick={() => handleViewRole(record)}
+              />
+            </Tooltip>
+            <Tooltip title="编辑">
+              <Button
+                type="text"
+                icon={<EditOutlined />}
+                onClick={() => handleEditRole(record)}
+              />
+            </Tooltip>
+            <Popconfirm
+              title="确定要删除这个角色吗？"
+              onConfirm={() => handleDeleteRole(record.id)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Tooltip title="删除">
+                <Button
+                  type="text"
+                  danger
+                  icon={<DeleteOutlined />}
+                />
+              </Tooltip>
+            </Popconfirm>
+          </Space>
+        ),
+      },
+    ];
+
+    const activeRoles = roles.filter(role => role.is_active);
+    const totalRoles = roles.length;
+
+    return (
+      <div>
+        <Card title="👤 角色管理" style={{ marginBottom: 16 }}>
+          <Row gutter={16} style={{ marginBottom: 16 }}>
+            <Col span={8}>
+              <Statistic
+                title="总角色数"
+                value={totalRoles}
+                prefix={<UserOutlined />}
+              />
+            </Col>
+            <Col span={8}>
+              <Statistic
+                title="启用角色"
+                value={activeRoles.length}
+                prefix={<UserOutlined />}
+                valueStyle={{ color: '#3f8600' }}
+              />
+            </Col>
+            <Col span={8}>
+              <Statistic
+                title="禁用角色"
+                value={totalRoles - activeRoles.length}
+                prefix={<UserOutlined />}
+                valueStyle={{ color: '#cf1322' }}
+              />
+            </Col>
+          </Row>
+
+          <div style={{ marginBottom: 16 }}>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={handleCreateRole}
+            >
+              创建角色
+            </Button>
+          </div>
+
+          <Table
+            columns={columns}
+            dataSource={roles}
+            rowKey="id"
+            loading={rolesLoading}
+            pagination={{
+              pageSize: 10,
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total) => `共 ${total} 个角色`,
+            }}
+          />
+        </Card>
+
+        {/* 创建/编辑角色模态框 */}
+        <Modal
+          title={editingRole ? '编辑角色' : '创建角色'}
+          open={roleModalVisible}
+          onOk={handleSubmitRole}
+          onCancel={() => setRoleModalVisible(false)}
+          width={600}
+          okText="保存"
+          cancelText="取消"
+        >
+          <Form
+            form={roleForm}
+            layout="vertical"
+            initialValues={{ is_active: true }}
+          >
+            <Form.Item
+              name="name"
+              label="角色名称"
+              rules={[
+                { required: true, message: '请输入角色名称' },
+                { max: 100, message: '角色名称不能超过100个字符' }
+              ]}
+            >
+              <Input placeholder="请输入角色名称" />
+            </Form.Item>
+
+            <Form.Item
+              name="description"
+              label="角色描述"
+              rules={[
+                { max: 500, message: '角色描述不能超过500个字符' }
+              ]}
+            >
+              <TextArea
+                placeholder="请输入角色描述（可选）"
+                rows={3}
+                showCount
+                maxLength={500}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="prompt"
+              label="角色提示词"
+              rules={[
+                { required: true, message: '请输入角色提示词' }
+              ]}
+            >
+              <TextArea
+                placeholder="请输入角色提示词，用于指导AI的回答风格和重点方向"
+                rows={6}
+                showCount
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="is_active"
+              label="状态"
+              valuePropName="checked"
+            >
+              <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+            </Form.Item>
+          </Form>
+        </Modal>
+
+        {/* 查看角色详情模态框 */}
+        <Modal
+          title="角色详情"
+          open={viewModalVisible}
+          onCancel={() => setViewModalVisible(false)}
+          footer={[
+            <Button key="close" onClick={() => setViewModalVisible(false)}>
+              关闭
+            </Button>
+          ]}
+          width={600}
+        >
+          {viewingRole && (
+            <div>
+              <Paragraph>
+                <strong>角色名称：</strong>{viewingRole.name}
+              </Paragraph>
+              <Paragraph>
+                <strong>描述：</strong>{viewingRole.description || '无'}
+              </Paragraph>
+              <Paragraph>
+                <strong>状态：</strong>
+                <Tag color={viewingRole.is_active ? 'success' : 'default'}>
+                  {viewingRole.is_active ? '启用' : '禁用'}
+                </Tag>
+              </Paragraph>
+              <Paragraph>
+                <strong>创建时间：</strong>{new Date(viewingRole.created_at).toLocaleString()}
+              </Paragraph>
+              <Paragraph>
+                <strong>更新时间：</strong>{new Date(viewingRole.updated_at).toLocaleString()}
+              </Paragraph>
+              <Divider />
+              <Paragraph>
+                <strong>角色提示词：</strong>
+              </Paragraph>
+              <div style={{
+                background: '#f5f5f5',
+                padding: '12px',
+                borderRadius: '6px',
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'monospace',
+                fontSize: '13px',
+                lineHeight: '1.5'
+              }}>
+                {viewingRole.prompt}
+              </div>
+            </div>
+          )}
+        </Modal>
+      </div>
+    );
+  };
+
   const renderAbout = () => (
     <Card title="ℹ️ 关于 ChromaDB Manager">
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
@@ -1384,6 +1732,8 @@ const SettingsTab: React.FC = () => {
         return renderModelSettings();
       case 'llm':
         return renderLlmSettings();
+      case 'roles':
+        return renderRoleSettings();
       case 'theme':
         return renderThemeSettings();
       case 'notifications':

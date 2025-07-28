@@ -5,7 +5,8 @@ import {
   HomeOutlined,
   SearchOutlined,
   BarChartOutlined,
-  SettingOutlined
+  SettingOutlined,
+  UserOutlined
 } from '@ant-design/icons';
 import GlobalSearch from './GlobalSearch';
 import ThemeToggle from './ThemeToggle';

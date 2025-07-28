@@ -39,6 +39,7 @@ import asyncio
 from file_parsers import file_parser_manager, FileFormat
 from config_manager import config_manager
 from platform_utils import platform_utils
+from role_manager import role_manager, Role, CreateRoleRequest, UpdateRoleRequest
 
 # 延迟导入有问题的模块，避免启动时冲突
 def get_rag_chunker():
@@ -237,6 +238,7 @@ class LLMQueryRequest(BaseModel):
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2000
     similarity_threshold: Optional[float] = 1.5
+    role_id: Optional[str] = None  # 角色ID，用于选择角色提示词
 
 class LLMStreamChunk(BaseModel):
     content: str
@@ -1772,7 +1774,8 @@ async def llm_query(request: LLMQueryRequest):
                     query_results=final_results,
                     user_query=request.query,
                     temperature=request.temperature,
-                    max_tokens=request.max_tokens
+                    max_tokens=request.max_tokens,
+                    role_id=request.role_id
                 ):
                     # 格式化为Server-Sent Events格式
                     data = json.dumps(chunk, ensure_ascii=False)
@@ -2569,6 +2572,80 @@ async def verify_llm_provider(provider: str, request: dict):
     except Exception as e:
         logger.error(f"验证LLM提供商配置失败: {e}")
         raise HTTPException(status_code=500, detail=f"验证LLM提供商配置失败: {str(e)}")
+
+
+# ==================== 角色管理API ====================
+
+@app.get("/api/roles", response_model=List[Role])
+async def get_roles(active_only: bool = False):
+    """获取角色列表"""
+    try:
+        roles = role_manager.list_roles(active_only=active_only)
+        return roles
+    except Exception as e:
+        logger.error(f"获取角色列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取角色列表失败: {str(e)}")
+
+
+@app.get("/api/roles/{role_id}", response_model=Role)
+async def get_role(role_id: str):
+    """根据ID获取角色"""
+    try:
+        role = role_manager.get_role(role_id)
+        if not role:
+            raise HTTPException(status_code=404, detail="角色不存在")
+        return role
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取角色失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取角色失败: {str(e)}")
+
+
+@app.post("/api/roles", response_model=Role)
+async def create_role(request: CreateRoleRequest):
+    """创建新角色"""
+    try:
+        role = role_manager.create_role(request)
+        return role
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"创建角色失败: {e}")
+        raise HTTPException(status_code=500, detail=f"创建角色失败: {str(e)}")
+
+
+@app.put("/api/roles/{role_id}", response_model=Role)
+async def update_role(role_id: str, request: UpdateRoleRequest):
+    """更新角色"""
+    try:
+        role = role_manager.update_role(role_id, request)
+        if not role:
+            raise HTTPException(status_code=404, detail="角色不存在")
+        return role
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新角色失败: {e}")
+        raise HTTPException(status_code=500, detail=f"更新角色失败: {str(e)}")
+
+
+@app.delete("/api/roles/{role_id}")
+async def delete_role(role_id: str):
+    """删除角色"""
+    try:
+        success = role_manager.delete_role(role_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="角色不存在")
+        return {"message": "角色删除成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除角色失败: {e}")
+        raise HTTPException(status_code=500, detail=f"删除角色失败: {str(e)}")
+
 
 if __name__ == "__main__":
     uvicorn.run(

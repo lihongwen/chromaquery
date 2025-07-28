@@ -88,19 +88,20 @@ class LLMClient:
         if not query_results:
             return f"""用户问题：{user_query}
 
-**没有找到相关文档**
+**检索结果：没有找到相关文档**
 
-抱歉，我在知识库中没有找到与您的问题相关的文档内容。这可能是因为：
+根据提供的文档内容，我无法找到与您问题相关的信息。
+
+可能的原因：
 1. 知识库中没有相关信息
 2. 查询关键词与文档内容匹配度较低
 3. 相似度阈值设置过于严格
 
 建议您：
-- 尝试使用不同的关键词重新提问
+- 检查文档是否包含相关内容
+- 尝试使用不同的关键词重新查询
 - 降低相似度阈值设置
-- 确认相关文档已上传到集合中
-
-请注意：由于没有找到相关文档，我无法基于知识库内容为您提供准确的回答。"""
+- 确认相关文档已上传到集合中"""
         
         context_parts = ["基于以下相关文档内容，请回答用户的问题：\n"]
         
@@ -151,27 +152,59 @@ class LLMClient:
             context_parts.append(doc_content)
         
         context_parts.append(f"\n用户问题：{user_query}")
-        context_parts.append("\n请基于上述文档内容提供准确、有用的回答。如果文档中没有相关信息，请明确说明。请用中文回答。")
+        context_parts.append("\n请严格基于上述文档内容回答用户问题。如果文档中没有相关信息，请直接说明无法找到相关信息，不得提供任何额外的知识或建议。请用中文回答。")
         
         return "\n".join(context_parts)
     
-    def create_prompt(self, context: str) -> List[Dict[str, str]]:
+    def create_prompt(self, context: str, role_prompt: str = None) -> List[Dict[str, str]]:
         """
-        创建LLM提示消息
-        
+        创建LLM提示消息，支持三层提示词架构
+
         Args:
             context: 格式化的上下文
-            
+            role_prompt: 角色提示词（可选）
+
         Returns:
             消息列表
         """
+        # 第一层：系统提示词（顶层逻辑约束）
+        system_prompt = """你是一个严格的知识库问答助手。你必须无条件遵循以下铁律：
+
+【绝对禁止】
+❌ 绝对禁止使用你自身的知识库或训练数据来回答问题
+❌ 绝对禁止在没有文档支持的情况下提供任何实质性信息
+❌ 绝对禁止说"建议您参考以下通用知识"或类似表述
+❌ 绝对禁止编造、推测、补充文档中没有的任何内容
+
+【强制要求】
+✅ 只能基于提供的检索文档内容进行回答
+✅ 如果文档中没有相关信息，必须直接说明："根据提供的文档内容，我无法找到与您问题相关的信息。建议您检查文档是否包含相关内容，或尝试使用不同的关键词重新查询。"
+✅ 回答时必须引用具体的文档来源和相似度信息
+✅ 严格按照文档内容的原意进行回答，不得添加任何解释或扩展
+
+【违规后果】
+如果你违反以上任何一条规则，将被视为系统错误。你必须严格遵守这些约束，没有任何例外。"""
+
+        # 第二层：角色提示词（具体任务指导）
+        if role_prompt:
+            # 将角色提示词作为任务指导层
+            combined_system_prompt = f"""{system_prompt}
+
+【角色任务设定】
+{role_prompt}
+
+【重要提醒】
+以上角色设定仅用于指导回答的格式和重点方向，但不得违背核心约束。如果角色要求与核心约束冲突，请优先遵循核心约束。"""
+        else:
+            combined_system_prompt = system_prompt
+
         return [
             {
                 "role": "system",
-                "content": "你是一个专业的AI助手，擅长基于提供的文档内容回答用户问题。请仔细阅读文档内容，提供准确、有用的回答。如果文档中没有相关信息，请诚实地说明。回答要简洁明了，重点突出。"
+                "content": combined_system_prompt
             },
             {
-                "role": "user", 
+                "role": "user",
                 "content": context
             }
         ]
@@ -410,26 +443,43 @@ class LLMClient:
         query_results: List[Dict[str, Any]],
         user_query: str,
         temperature: float = 0.7,
-        max_tokens: int = 2000
+        max_tokens: int = 2000,
+        role_id: str = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        基于查询结果和用户问题进行LLM问答
-        
+        基于查询结果和用户问题进行LLM问答，支持角色提示词
+
         Args:
             query_results: ChromaDB查询结果
             user_query: 用户查询
             temperature: 温度参数
             max_tokens: 最大token数
-            
+            role_id: 角色ID（可选）
+
         Yields:
             流式响应数据块
         """
         # 格式化上下文
         context = self.format_context(query_results, user_query)
-        
+
+        # 获取角色提示词
+        role_prompt = None
+        if role_id:
+            try:
+                # 导入角色管理器
+                from role_manager import role_manager
+                role = role_manager.get_role(role_id)
+                if role and role.is_active:
+                    role_prompt = role.prompt
+                    logger.info(f"使用角色提示词: {role.name}")
+                else:
+                    logger.warning(f"角色不存在或未启用: {role_id}")
+            except Exception as e:
+                logger.warning(f"获取角色提示词失败: {e}")
+
         # 创建提示消息
-        messages = self.create_prompt(context)
-        
+        messages = self.create_prompt(context, role_prompt)
+
         # 流式调用LLM
         async for chunk in self.stream_chat(messages, temperature, max_tokens):
             yield chunk

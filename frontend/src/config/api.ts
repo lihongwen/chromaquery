@@ -124,7 +124,7 @@ export const api = {
   query: {
     vector: (data: { query: string; collections: string[]; limit?: number }) => 
       apiClient.post('/query', data),
-    llm: (data: { query: string; collections: string[]; limit?: number; temperature?: number; max_tokens?: number; similarity_threshold?: number }) =>
+    llm: (data: { query: string; collections: string[]; limit?: number; temperature?: number; max_tokens?: number; similarity_threshold?: number; role_id?: string }) =>
       fetch(`${API_BASE_URL}/llm-query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
