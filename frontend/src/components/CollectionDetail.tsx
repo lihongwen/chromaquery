@@ -48,6 +48,7 @@ import {
   generateAcceptString
 } from '../utils/fileUtils';
 import { showError, getDetailedErrorMessage } from '../utils/errorHandler';
+import { estimateProcessingTime, getCurrentStage, formatRemainingTime, getProcessingHint } from '../utils/uploadProgress';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -333,51 +334,48 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
         message: '正在上传文件...'
       });
 
-      // 模拟上传进度（实际项目中应该使用真实的上传进度）
-      const progressInterval = setInterval(() => {
+      // 智能进度显示：基于文件大小和类型估算处理时间
+      const progressEstimate = estimateProcessingTime(selectedFile.size, selectedFile.name);
+      const progressInterval = 1000; // 每秒更新一次
+      const startTime = Date.now();
+
+      // 显示处理提示
+      const processingHint = getProcessingHint(selectedFile.name);
+
+      const progressTimer = setInterval(() => {
         setUploadProgress(prev => {
           if (!prev) return null;
 
-          let newPercent = prev.percent + 10;
-          let newStatus = prev.status;
-          let newMessage = prev.message;
+          const elapsedSeconds = (Date.now() - startTime) / 1000;
+          let newPercent = Math.min(85, elapsedSeconds * progressEstimate.incrementPerSecond);
 
-          if (newPercent >= 30 && prev.status === 'uploading') {
-            newStatus = 'processing';
-            newMessage = '正在处理文件内容...';
-          } else if (newPercent >= 50 && prev.status === 'processing') {
-            newStatus = 'chunking';
-            newMessage = '正在进行RAG分块...';
-          } else if (newPercent >= 80 && prev.status === 'chunking') {
-            newStatus = 'embedding';
-            newMessage = '正在生成向量嵌入...';
-          }
+          // 获取当前阶段
+          const currentStage = getCurrentStage(newPercent, progressEstimate.stages);
+          const remainingTime = Math.max(0, progressEstimate.estimatedTimeSeconds - elapsedSeconds);
 
-          if (newPercent >= 100) {
-            clearInterval(progressInterval);
-            newPercent = 100;
-            newStatus = 'success';
-            newMessage = '上传完成！';
+          let newMessage = currentStage?.message || '正在处理...';
+          if (remainingTime > 5) {
+            newMessage += ` (${formatRemainingTime(remainingTime)})`;
           }
 
           return {
             ...prev,
-            percent: newPercent,
-            status: newStatus,
+            percent: Math.round(newPercent),
+            status: currentStage?.name || 'processing',
             message: newMessage
           };
         });
-      }, 500);
+      }, progressInterval);
 
       // 实际的API调用
       try {
         const response = await api.documents.upload(collectionName, formData);
 
-        clearInterval(progressInterval);
+        clearInterval(progressTimer);
         setUploadProgress({
           percent: 100,
           status: 'success',
-          message: '文档上传并处理完成！',
+          message: `文档处理完成！创建了 ${response.data.chunks_created} 个文档块`,
           chunks_created: response.data.chunks_created,
           total_chunks: response.data.chunks_created
         });
@@ -391,18 +389,36 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
         }, 3000);
 
       } catch (apiError: any) {
-        clearInterval(progressInterval);
+        clearInterval(progressTimer);
         console.error('API调用失败:', apiError);
 
-        const errorDetail = apiError.response?.data?.detail || '文档上传失败';
+        // 改进的错误处理
+        let errorMessage = '文档上传失败';
+        let isTimeout = false;
+
+        if (apiError.code === 'ECONNABORTED' || apiError.message?.includes('timeout')) {
+          isTimeout = true;
+          errorMessage = '处理超时，但文件可能仍在后台处理中，请稍后刷新查看结果';
+        } else if (apiError.response?.data?.detail) {
+          errorMessage = apiError.response.data.detail;
+        }
+
         setUploadProgress({
           percent: 0,
           status: 'error',
-          message: errorDetail
+          message: errorMessage
         });
 
-        // 使用增强的错误处理
-        showError(apiError);
+        // 对于超时错误，提供不同的处理建议
+        if (isTimeout) {
+          message.warning({
+            content: '文件处理时间较长，请耐心等待。您可以稍后刷新页面查看处理结果。',
+            duration: 8
+          });
+        } else {
+          // 使用增强的错误处理
+          showError(apiError);
+        }
       }
 
     } catch (error: any) {

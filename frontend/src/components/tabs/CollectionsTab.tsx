@@ -325,26 +325,47 @@ const CollectionsTab: React.FC = () => {
       };
       formData.append('chunking_config', JSON.stringify(chunkingConfig));
 
-      const response = await fetch(`${API_BASE_URL}/collections/${encodeURIComponent(collection)}/upload`, {
-        method: 'POST',
-        body: formData,
-      });
+      // 使用改进的API调用，支持更长的超时时间
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5分钟超时
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || '上传失败');
+      try {
+        const response = await fetch(`${API_BASE_URL}/collections/${encodeURIComponent(collection)}/upload`, {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || '上传失败');
+        }
+
+        const result = await response.json();
+        message.success(`文档上传成功！创建了 ${result.chunks_created} 个文档块`);
+        setImportModalVisible(false);
+        importForm.resetFields();
+
+        // 刷新集合列表
+        fetchCollections();
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        throw fetchError;
       }
-
-      const result = await response.json();
-      message.success(`文档上传成功！创建了 ${result.chunks_created} 个文档块`);
-      setImportModalVisible(false);
-      importForm.resetFields();
-
-      // 刷新集合列表
-      fetchCollections();
     } catch (error: any) {
       console.error('导入数据失败:', error);
-      message.error(`导入数据失败: ${error.message}`);
+
+      // 改进的错误处理
+      if (error.name === 'AbortError') {
+        message.warning({
+          content: '文件处理时间较长，请耐心等待。您可以稍后刷新页面查看处理结果。',
+          duration: 8
+        });
+      } else {
+        message.error(`导入数据失败: ${error.message}`);
+      }
     }
   };
 
@@ -1096,7 +1117,7 @@ const CollectionsTab: React.FC = () => {
               <p className="ant-upload-hint">
                 支持多种文档格式：文本、PDF、Word、PowerPoint、Markdown、RTF、Excel、CSV
                 <br />
-                文件大小不超过 50MB
+                文件大小不超过 150MB
               </p>
             </Upload.Dragger>
           </Form.Item>

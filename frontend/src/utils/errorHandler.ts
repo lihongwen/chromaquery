@@ -41,7 +41,7 @@ const ERROR_MESSAGES: Record<string, ErrorInfo> = {
   [ERROR_CODES.FILE_TOO_LARGE]: {
     code: ERROR_CODES.FILE_TOO_LARGE,
     message: '文件大小超过限制',
-    details: '文件大小不能超过 50MB',
+    details: '文件大小不能超过 150MB',
     suggestions: [
       '请选择较小的文件',
       '可以将大文件分割成多个小文件上传',
@@ -126,12 +126,12 @@ const ERROR_MESSAGES: Record<string, ErrorInfo> = {
   
   [ERROR_CODES.TIMEOUT_ERROR]: {
     code: ERROR_CODES.TIMEOUT_ERROR,
-    message: '请求超时',
-    details: '文件处理时间过长',
+    message: '处理超时',
+    details: '文件处理时间较长，可能仍在后台处理中',
     suggestions: [
-      '大文件处理需要更多时间，请耐心等待',
-      '可以尝试分割文件后重新上传',
-      '检查网络连接是否稳定'
+      '大文件处理需要更长时间，请耐心等待',
+      '您可以稍后刷新页面查看处理结果',
+      '如果持续超时，请尝试分割文件后重新上传'
     ]
   },
   

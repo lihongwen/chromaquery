@@ -58,7 +58,7 @@ class BaseFileParser(ABC):
     
     def __init__(self):
         self.supported_formats: List[FileFormat] = []
-        self.max_file_size = 50 * 1024 * 1024  # 50MB
+        self.max_file_size = 150 * 1024 * 1024  # 150MB
     
     @abstractmethod
     def can_parse(self, file_format: FileFormat) -> bool:

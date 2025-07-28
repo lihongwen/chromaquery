@@ -999,16 +999,21 @@ async def upload_document(
             )
 
         # 读取文件内容
+        logger.info(f"开始读取文件内容: {file.filename}")
         content = await file.read()
+        file_size_mb = len(content) / (1024 * 1024)
+        logger.info(f"文件读取完成，大小: {file_size_mb:.2f}MB")
 
-        # 验证文件大小 (50MB限制，增加了限制以支持更多格式)
-        if len(content) > 50 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="文件大小不能超过 50MB")
+        # 验证文件大小 (150MB限制，增加了限制以支持更多格式)
+        if len(content) > 150 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="文件大小不能超过 150MB")
 
         # 使用文件解析器解析文件
-        logger.info(f"开始解析文件: {file.filename}")
+        logger.info(f"开始解析文件: {file.filename} ({file_size_mb:.2f}MB)")
+        parse_start_time = time.time()
         parse_result = file_parser_manager.parse_file(content, file.filename)
-        logger.info(f"文件解析结果: success={parse_result.success}, is_table={parse_result.is_table}")
+        parse_time = time.time() - parse_start_time
+        logger.info(f"文件解析完成: success={parse_result.success}, is_table={parse_result.is_table}, 耗时: {parse_time:.2f}秒")
 
         if not parse_result.success:
             logger.error(f"文件解析失败: {parse_result.error_message}")
@@ -1051,8 +1056,12 @@ async def upload_document(
                 raise HTTPException(status_code=400, detail="文件中未提取到有效文本内容")
 
             # 进行RAG分块
+            logger.info(f"开始RAG分块处理，文本长度: {len(text_content)} 字符，方法: {config.method}")
+            chunking_start_time = time.time()
             chunker = RAGChunker()
             chunking_result = chunker.chunk_text(text_content, config)
+            chunking_time = time.time() - chunking_start_time
+            logger.info(f"RAG分块完成，生成 {chunking_result.total_chunks} 个块，耗时: {chunking_time:.2f}秒")
 
         # 准备文档数据
         documents = []
@@ -1230,6 +1239,9 @@ async def upload_document(
         sanitized_metadatas = [sanitize_metadata(metadata) for metadata in metadatas]
 
         # 添加到ChromaDB
+        logger.info(f"开始向量化和存储 {len(documents)} 个文档块到集合 '{collection_name}'")
+        embedding_start_time = time.time()
+
         if embeddings:
             # 使用预生成的向量
             target_collection.add(
@@ -1246,6 +1258,9 @@ async def upload_document(
                 ids=ids
             )
 
+        embedding_time = time.time() - embedding_start_time
+        logger.info(f"向量化和存储完成，耗时: {embedding_time:.2f}秒")
+
         # 确保数据持久化
         try:
             chroma_client.persist()
@@ -1260,6 +1275,8 @@ async def upload_document(
             message = f"表格文件 '{file.filename}' 上传成功，创建了 {len(documents)} 行数据"
         else:
             message = f"文档 '{file.filename}' 上传成功，创建了 {len(documents)} 个文档块"
+
+        logger.info(f"文件处理完成: {file.filename}, 总耗时: {processing_time:.2f}秒, 创建文档块: {len(documents)}")
 
         return FileUploadResponse(
             message=message,
