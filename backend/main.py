@@ -7,6 +7,7 @@ ChromaDB Web Manager - 后端主应用
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from contextlib import asynccontextmanager
 import chromadb
 from chromadb.config import Settings
 import chromadb.utils.embedding_functions as ef
@@ -67,11 +68,37 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ChromaDB客户端
+chroma_client = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # 启动时初始化
+    init_chroma_client()
+
+    # 尝试初始化LLM客户端
+    get_llm_client_func, init_llm_client_func = get_llm_client_module()
+    if init_llm_client_func:
+        try:
+            init_llm_client_func()
+            logger.info("LLM客户端初始化成功")
+        except Exception as e:
+            logger.warning(f"LLM客户端初始化失败: {e}")
+    else:
+        logger.warning("LLM客户端模块不可用")
+
+    yield
+
+    # 关闭时清理（如果需要的话）
+    logger.info("应用关闭，清理资源")
+
 # 创建FastAPI应用
 app = FastAPI(
     title="ChromaDB Web Manager",
     description="ChromaDB集合管理Web界面，支持中文集合名称",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # 配置CORS
@@ -88,8 +115,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ChromaDB客户端
-chroma_client = None
+
 
 def init_chroma_client():
     """初始化ChromaDB客户端"""
@@ -99,21 +125,16 @@ def init_chroma_client():
         chroma_path = platform_utils.get_chroma_data_directory()
         logger.info(f"使用ChromaDB数据路径: {chroma_path}")
 
-        # ChromaDB 0.3.29版本使用不同的API
+        # ChromaDB 1.0+版本使用新的API
         # 使用持久化客户端，确保数据永久保存
-        chroma_client = chromadb.Client(
-            settings=chromadb.config.Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=str(chroma_path)
-            )
-        )
+        chroma_client = chromadb.PersistentClient(path=str(chroma_path))
         logger.info("ChromaDB持久化客户端初始化成功")
 
     except Exception as e:
         logger.error(f"ChromaDB客户端初始化失败: {e}")
         # 如果持久化失败，使用内存客户端作为回退
         logger.warning("持久化初始化失败，使用内存客户端作为回退")
-        chroma_client = chromadb.Client()
+        chroma_client = chromadb.EphemeralClient()
         logger.info("ChromaDB内存客户端初始化成功（回退模式）")
 
 def encode_collection_name(chinese_name: str) -> str:
@@ -300,21 +321,7 @@ class CollectionMigrationRequest(BaseModel):
     target_provider: str  # "alibaba" 或 "ollama"
     target_config: Optional[dict] = None  # 目标模型配置
 
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时初始化ChromaDB客户端和LLM客户端"""
-    init_chroma_client()
 
-    # 尝试初始化LLM客户端
-    get_llm_client_func, init_llm_client_func = get_llm_client_module()
-    if init_llm_client_func:
-        try:
-            init_llm_client_func()
-            logger.info("LLM客户端初始化成功")
-        except Exception as e:
-            logger.warning(f"LLM客户端初始化失败: {e}")
-    else:
-        logger.warning("LLM客户端模块不可用")
 
 @app.get("/")
 async def root():
@@ -700,12 +707,8 @@ async def create_collection(request: CreateCollectionRequest):
             embedding_function=embedding_function
         )
 
-        # 确保数据持久化
-        try:
-            chroma_client.persist()
-            logger.info("数据已持久化到磁盘")
-        except Exception as persist_error:
-            logger.warning(f"数据持久化失败: {persist_error}")
+        # ChromaDB 1.0+ 自动持久化数据
+        logger.info("数据已自动持久化到磁盘")
 
         if embedding_provider == "alibaba":
             alibaba_config = config_manager.get_alibaba_config()
@@ -953,12 +956,8 @@ async def add_documents(collection_name: str, request: AddDocumentRequest):
                 ids=ids
             )
 
-        # 确保数据持久化
-        try:
-            chroma_client.persist()
-            logger.info(f"向集合 '{collection_name}' 添加文档后，数据已持久化到磁盘")
-        except Exception as persist_error:
-            logger.warning(f"数据持久化失败: {persist_error}")
+        # ChromaDB 1.0+ 自动持久化数据
+        logger.info(f"向集合 '{collection_name}' 添加文档后，数据已自动持久化到磁盘")
 
         return {
             "message": f"成功向集合 '{collection_name}' 添加 {len(documents)} 个文档",
@@ -1263,12 +1262,8 @@ async def upload_document(
         embedding_time = time.time() - embedding_start_time
         logger.info(f"向量化和存储完成，耗时: {embedding_time:.2f}秒")
 
-        # 确保数据持久化
-        try:
-            chroma_client.persist()
-            logger.info(f"文件 '{file.filename}' 上传后，数据已持久化到磁盘")
-        except Exception as persist_error:
-            logger.warning(f"数据持久化失败: {persist_error}")
+        # ChromaDB 1.0+ 自动持久化数据
+        logger.info(f"文件 '{file.filename}' 上传后，数据已自动持久化到磁盘")
 
         processing_time = time.time() - start_time
 
