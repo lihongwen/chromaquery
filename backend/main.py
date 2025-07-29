@@ -1568,14 +1568,28 @@ async def query_collections(request: QueryRequest):
                         distance_metric = DistanceMetric.L2
 
                     for i, doc_id in enumerate(search_results['ids'][0]):
-                        distance = search_results['distances'][0][i] if search_results.get('distances') else 0.0
+                        # 确保distance是标量值，兼容新版本ChromaDB/NumPy
+                        distance_raw = search_results['distances'][0][i] if search_results.get('distances') else 0.0
+                        distance = float(distance_raw) if hasattr(distance_raw, '__iter__') and not isinstance(distance_raw, str) else float(distance_raw)
 
                         # 使用优化的相似度计算
                         similarity_percent = calculate_optimized_similarity(distance, distance_metric)
 
+                        # 确保similarity_percent是标量值
+                        if hasattr(similarity_percent, '__iter__') and not isinstance(similarity_percent, str):
+                            similarity_percent = float(similarity_percent[0]) if len(similarity_percent) > 0 else 0.0
+                        else:
+                            similarity_percent = float(similarity_percent)
+
                         # 相似度阈值过滤：将百分比阈值转换为0-1范围
-                        similarity_threshold_decimal = request.similarity_threshold
+                        similarity_threshold_decimal = float(request.similarity_threshold)
                         similarity_decimal = similarity_percent / 100.0
+
+                        # 确保similarity_decimal是标量值
+                        if hasattr(similarity_decimal, '__iter__') and not isinstance(similarity_decimal, str):
+                            similarity_decimal = float(similarity_decimal[0]) if len(similarity_decimal) > 0 else 0.0
+                        else:
+                            similarity_decimal = float(similarity_decimal)
 
                         if similarity_decimal >= similarity_threshold_decimal:
                             result = QueryResult(
@@ -1588,7 +1602,9 @@ async def query_collections(request: QueryRequest):
                             all_results.append(result)
 
             except Exception as e:
+                import traceback
                 logger.warning(f"在集合 '{collection_name}' 中查询失败: {e}")
+                logger.warning(f"错误详情: {traceback.format_exc()}")
                 # 继续查询其他集合，不中断整个查询过程
                 continue
 
@@ -1671,7 +1687,7 @@ async def llm_query(request: LLMQueryRequest):
         for collection_name, collection in target_collections:
             try:
                 # 执行向量查询
-                if query_embedding:
+                if query_embedding is not None and len(query_embedding) > 0:
                     search_results = collection.query(
                         query_embeddings=[query_embedding],
                         n_results=request.limit,
@@ -1699,14 +1715,28 @@ async def llm_query(request: LLMQueryRequest):
                         distance_metric = DistanceMetric.L2
 
                     for i in range(len(search_results['documents'][0])):
-                        distance = search_results['distances'][0][i]
+                        # 确保distance是标量值，兼容新版本ChromaDB/NumPy
+                        distance_raw = search_results['distances'][0][i]
+                        distance = float(distance_raw) if hasattr(distance_raw, '__iter__') and not isinstance(distance_raw, str) else float(distance_raw)
 
                         # 使用优化的相似度计算
                         similarity_percent = calculate_optimized_similarity(distance, distance_metric)
 
+                        # 确保similarity_percent是标量值
+                        if hasattr(similarity_percent, '__iter__') and not isinstance(similarity_percent, str):
+                            similarity_percent = float(similarity_percent[0]) if len(similarity_percent) > 0 else 0.0
+                        else:
+                            similarity_percent = float(similarity_percent)
+
                         # 相似度阈值过滤：将百分比阈值转换为0-1范围
-                        similarity_threshold_decimal = request.similarity_threshold
+                        similarity_threshold_decimal = float(request.similarity_threshold)
                         similarity_decimal = similarity_percent / 100.0
+
+                        # 确保similarity_decimal是标量值
+                        if hasattr(similarity_decimal, '__iter__') and not isinstance(similarity_decimal, str):
+                            similarity_decimal = float(similarity_decimal[0]) if len(similarity_decimal) > 0 else 0.0
+                        else:
+                            similarity_decimal = float(similarity_decimal)
 
                         logger.info(f"文档 {i}: distance={distance:.4f}, similarity={similarity_percent:.1f}%, threshold={similarity_threshold_decimal:.2f}")
                         if similarity_decimal >= similarity_threshold_decimal:
@@ -1720,7 +1750,9 @@ async def llm_query(request: LLMQueryRequest):
                             all_results.append(result_data)
 
             except Exception as e:
+                import traceback
                 logger.error(f"在集合 {collection_name} 中查询失败: {e}")
+                logger.error(f"错误详情: {traceback.format_exc()}")
                 continue
 
         # 按相似度排序并限制结果数量
