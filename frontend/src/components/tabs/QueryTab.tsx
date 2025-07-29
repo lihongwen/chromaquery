@@ -108,6 +108,8 @@ interface QueryResult {
 interface QuerySettings {
   similarity_threshold: number;
   n_results: number;
+  max_tokens: number;
+  temperature: number;
 }
 
 interface CollectionInfo {
@@ -129,6 +131,8 @@ const QueryTab: React.FC = () => {
   const [settings, setSettings] = useState<QuerySettings>({
     similarity_threshold: 0.3,
     n_results: 10,
+    max_tokens: 4000,
+    temperature: 0.7,
   });
   
   // 布局状态
@@ -373,6 +377,8 @@ const QueryTab: React.FC = () => {
         collections: selectedCollections,
         limit: settings.n_results,
         similarity_threshold: settings.similarity_threshold,
+        max_tokens: settings.max_tokens,
+        temperature: settings.temperature,
         role_id: selectedRoleId, // 添加角色ID参数
       });
 
@@ -779,6 +785,44 @@ const QueryTab: React.FC = () => {
                   }
                 }}
                 style={{ width: '100%' }}
+              />
+            </Form.Item>
+
+            <Form.Item label="最大输出长度">
+              <InputNumber
+                min={100}
+                max={8000}
+                step={100}
+                value={settings.max_tokens}
+                onChange={(value) => {
+                  const newValue = value || 4000;
+                  if (newValue !== settings.max_tokens) {
+                    setSettings(prev => ({ ...prev, max_tokens: newValue }));
+                  }
+                }}
+                style={{ width: '100%' }}
+                formatter={(value) => `${value} tokens`}
+                parser={(value) => value?.replace(' tokens', '') as any}
+              />
+            </Form.Item>
+
+            <Form.Item label="创造性">
+              <Slider
+                min={0}
+                max={1}
+                step={0.1}
+                value={settings.temperature}
+                onChange={(value) => {
+                  if (value !== settings.temperature) {
+                    setSettings(prev => ({ ...prev, temperature: value }));
+                  }
+                }}
+                marks={{
+                  0: '保守',
+                  0.3: '平衡',
+                  0.7: '创新',
+                  1: '随机'
+                }}
               />
             </Form.Item>
           </Form>

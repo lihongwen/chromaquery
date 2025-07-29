@@ -361,6 +361,8 @@ class LLMClient:
             }
 
             logger.info(f"开始DeepSeek LLM请求，模型：{self.model_name}")
+            logger.info(f"请求参数: max_tokens={max_tokens}, temperature={temperature}")
+            logger.info(f"消息数量: {len(messages)}")
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -372,11 +374,16 @@ class LLMClient:
 
                 if response.status_code == 200:
                     result = response.json()
+                    logger.info(f"DeepSeek完整响应: {json.dumps(result, indent=2, ensure_ascii=False)}")
+
                     if "choices" in result and len(result["choices"]) > 0:
                         content = result["choices"][0]["message"]["content"]
                         usage = result.get("usage")
+                        finish_reason = result["choices"][0].get("finish_reason")
 
                         logger.info(f"DeepSeek响应长度: {len(content)} 字符")
+                        logger.info(f"DeepSeek完成原因: {finish_reason}")
+                        logger.info(f"DeepSeek使用情况: {usage}")
 
                         # 模拟流式效果
                         chunk_size = 2

@@ -3,7 +3,7 @@
   "path_history": [
     "/Users/lihongwen/Projects/chromadb/chromadb-web-manager/chromadbdata"
   ],
-  "last_updated": "2025-07-27T16:10:53.012328",
+  "last_updated": "2025-07-29T22:56:16.445234",
   "max_history_count": 10,
   "embedding_config": {
     "default_provider": "ollama",
@@ -25,7 +25,7 @@
   "llm_config": {
     "default_provider": "alibaba",
     "deepseek": {
-      "api_key": "sk-test-deepseek-key-12345",
+      "api_key": "sk-8b02050425e44063a92d5d743454285e",
       "api_endpoint": "https://api.deepseek.com",
       "model": "deepseek-reasoner",
       "models": [
