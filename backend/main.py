@@ -1789,8 +1789,12 @@ async def upload_document_stream(
                     ids.append(chunk_id)
 
             total_chunks = len(documents)
-            # 不发送 chunks_processed=0 的初始化消息，避免覆盖实际进度
-            # yield f"data: {json.dumps(UploadProgressUpdate(stage='embedding', percent=70, message=f'开始生成向量嵌入，共 {total_chunks} 个文档块...', total_chunks=total_chunks, chunks_processed=0).model_dump())}\n\n"
+            # 发送嵌入阶段开始消息，确保前端正确切换到嵌入阶段
+            logger.info(f"🚀 发送嵌入阶段开始信号: stage='embedding', percent=65, total_chunks={total_chunks}")
+            yield f"data: {json.dumps(UploadProgressUpdate(stage='embedding', percent=65, message=f'开始生成向量嵌入，共 {total_chunks} 个文档块...', total_chunks=total_chunks, chunks_processed=0).model_dump())}\n\n"
+
+            # 短暂延迟确保前端接收到阶段切换消息
+            await asyncio.sleep(0.1)
 
             # 检查集合使用的嵌入模型并处理向量化
             collection_metadata = target_collection.metadata or {}
@@ -1801,8 +1805,8 @@ async def upload_document_stream(
 
             # 创建进度回调函数
             def send_embedding_progress(processed: int, total: int, batch_info: dict = None):
-                # 计算嵌入阶段的子进度 (70% - 95%)
-                embedding_progress = int(70 + (processed / total) * 25)
+                # 计算嵌入阶段的子进度 (65% - 90%) - 与前端保持一致
+                embedding_progress = int(65 + (processed / total) * 25)
                 sub_progress = int((processed / total) * 100)
 
                 message = f"正在生成向量嵌入并存储... 已保存 {processed} / {total} 个文档块"
