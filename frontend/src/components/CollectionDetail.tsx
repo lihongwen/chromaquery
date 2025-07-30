@@ -34,10 +34,9 @@ import {
   InboxOutlined,
   SettingOutlined,
   DeleteOutlined,
-  FolderOutlined,
+
 } from '@ant-design/icons';
-import axios from 'axios';
-import { api, API_BASE_URL } from '../config/api';
+import { api } from '../config/api';
 import {
   isSupportedFile,
   getFileFormatInfo,
@@ -47,8 +46,7 @@ import {
   getUploadHint,
   generateAcceptString
 } from '../utils/fileUtils';
-import { showError, getDetailedErrorMessage } from '../utils/errorHandler';
-import { estimateProcessingTime, getCurrentStage, formatRemainingTime, getProcessingHint } from '../utils/uploadProgress';
+import { showError } from '../utils/errorHandler';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -93,11 +91,14 @@ interface ChunkingConfig {
 
 // 上传进度接口
 interface UploadProgress {
+  stage: 'uploading' | 'processing' | 'chunking' | 'embedding' | 'success' | 'error';
   percent: number;
-  status: 'uploading' | 'processing' | 'chunking' | 'embedding' | 'success' | 'error';
   message: string;
-  chunks_created?: number;
+  chunks_processed?: number;
   total_chunks?: number;
+  batch_current?: number;
+  batch_total?: number;
+  sub_percent?: number;
 }
 
 interface CollectionDetailProps {
@@ -131,8 +132,11 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
     // 如果元数据中没有，尝试从第一个文档的向量中获取
     if (collectionDetail.sample_documents && collectionDetail.sample_documents.length > 0) {
       const firstDoc = collectionDetail.sample_documents[0];
-      if (firstDoc.embedding && firstDoc.embedding.length > 0) {
-        return firstDoc.embedding.length;
+      if (firstDoc.embedding && Array.isArray(firstDoc.embedding) && firstDoc.embedding.length > 0) {
+        // 检查向量是否包含有效的数值
+        if (firstDoc.embedding.every(x => typeof x === 'number' && !isNaN(x))) {
+          return firstDoc.embedding.length;
+        }
       }
     }
 
@@ -329,104 +333,98 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
 
       // 设置初始上传进度
       setUploadProgress({
+        stage: 'uploading',
         percent: 0,
-        status: 'uploading',
-        message: '正在上传文件...'
+        message: '准备上传文件...'
       });
 
-      // 智能进度显示：基于文件大小和类型估算处理时间
-      const progressEstimate = estimateProcessingTime(selectedFile.size, selectedFile.name);
-      const progressInterval = 1000; // 每秒更新一次
-      const startTime = Date.now();
-
-      // 显示处理提示
-      const processingHint = getProcessingHint(selectedFile.name);
-
-      const progressTimer = setInterval(() => {
-        setUploadProgress(prev => {
-          if (!prev) return null;
-
-          const elapsedSeconds = (Date.now() - startTime) / 1000;
-          let newPercent = Math.min(85, elapsedSeconds * progressEstimate.incrementPerSecond);
-
-          // 获取当前阶段
-          const currentStage = getCurrentStage(newPercent, progressEstimate.stages);
-          const remainingTime = Math.max(0, progressEstimate.estimatedTimeSeconds - elapsedSeconds);
-
-          let newMessage = currentStage?.message || '正在处理...';
-          if (remainingTime > 5) {
-            newMessage += ` (${formatRemainingTime(remainingTime)})`;
-          }
-
-          return {
-            ...prev,
-            percent: Math.round(newPercent),
-            status: currentStage?.name || 'processing',
-            message: newMessage
-          };
-        });
-      }, progressInterval);
-
-      // 实际的API调用
+      // 使用流式上传API
       try {
-        const response = await api.documents.upload(collectionName, formData);
+        const response = await api.documents.uploadStream(collectionName, formData);
 
-        clearInterval(progressTimer);
-        setUploadProgress({
-          percent: 100,
-          status: 'success',
-          message: `文档处理完成！创建了 ${response.data.chunks_created} 个文档块`,
-          chunks_created: response.data.chunks_created,
-          total_chunks: response.data.chunks_created
-        });
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
-        message.success(`文档上传成功！创建了 ${response.data.chunks_created} 个文档块`);
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('无法获取响应流');
+        }
 
-        // 3秒后关闭模态框并刷新数据
-        setTimeout(() => {
-          closeUploadModal();
-          fetchCollectionDetail();
-        }, 3000);
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // 处理完整的SSE消息
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // 保留不完整的行
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const progressData = JSON.parse(line.slice(6));
+
+                // 添加调试日志
+                console.log('📊 前端接收到进度数据:', progressData);
+
+                setUploadProgress(progressData);
+
+                // 如果是成功状态，显示成功消息
+                if (progressData.stage === 'success') {
+                  message.success(progressData.message);
+
+                  // 3秒后关闭模态框并刷新数据
+                  setTimeout(() => {
+                    closeUploadModal();
+                    fetchCollectionDetail();
+                  }, 3000);
+                }
+
+                // 如果是错误状态，显示错误消息
+                if (progressData.stage === 'error') {
+                  message.error(progressData.message);
+                }
+              } catch (parseError) {
+                console.error('解析进度数据失败:', parseError);
+              }
+            }
+          }
+        }
 
       } catch (apiError: any) {
-        clearInterval(progressTimer);
-        console.error('API调用失败:', apiError);
+        console.error('流式上传失败:', apiError);
 
         // 改进的错误处理
         let errorMessage = '文档上传失败';
-        let isTimeout = false;
 
-        if (apiError.code === 'ECONNABORTED' || apiError.message?.includes('timeout')) {
-          isTimeout = true;
-          errorMessage = '处理超时，但文件可能仍在后台处理中，请稍后刷新查看结果';
-        } else if (apiError.response?.data?.detail) {
-          errorMessage = apiError.response.data.detail;
+        if (apiError.message?.includes('timeout') || apiError.message?.includes('fetch')) {
+          errorMessage = '网络连接超时，请检查网络连接后重试';
+        } else if (apiError.message) {
+          errorMessage = apiError.message;
         }
 
         setUploadProgress({
+          stage: 'error',
           percent: 0,
-          status: 'error',
           message: errorMessage
         });
 
-        // 对于超时错误，提供不同的处理建议
-        if (isTimeout) {
-          message.warning({
-            content: '文件处理时间较长，请耐心等待。您可以稍后刷新页面查看处理结果。',
-            duration: 8
-          });
-        } else {
-          // 使用增强的错误处理
-          showError(apiError);
-        }
+        // 显示错误消息
+        message.error(errorMessage);
       }
 
     } catch (error: any) {
       console.error('文档上传失败:', error);
       const errorDetail = error.response?.data?.detail || '文档上传失败';
       setUploadProgress({
+        stage: 'error',
         percent: 0,
-        status: 'error',
         message: errorDetail
       });
 
@@ -1160,20 +1158,64 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
             <div style={{ marginBottom: 16 }}>
               <Progress
                 percent={uploadProgress.percent}
-                status={uploadProgress.status === 'error' ? 'exception' : 'active'}
+                status={uploadProgress.stage === 'error' ? 'exception' :
+                        uploadProgress.stage === 'success' ? 'success' : 'active'}
                 strokeColor={
-                  uploadProgress.status === 'success' ? '#52c41a' :
-                  uploadProgress.status === 'error' ? '#ff4d4f' : '#1890ff'
+                  uploadProgress.stage === 'success' ? '#52c41a' :
+                  uploadProgress.stage === 'error' ? '#ff4d4f' : '#1890ff'
                 }
               />
               <div style={{ marginTop: 8 }}>
-                <Text type={uploadProgress.status === 'error' ? 'danger' : 'secondary'}>
+                <Text type={uploadProgress.stage === 'error' ? 'danger' : 'secondary'}>
                   {uploadProgress.message}
                 </Text>
-                {uploadProgress.chunks_created && (
+
+                {/* 嵌入阶段的详细进度 */}
+                {uploadProgress.stage === 'embedding' && uploadProgress.total_chunks && (
+                  <div style={{ marginTop: 8 }}>
+                    {/* 子进度条 */}
+                    {uploadProgress.sub_percent !== undefined && (
+                      <Progress
+                        percent={uploadProgress.sub_percent}
+                        size="small"
+                        strokeColor="#52c41a"
+                        format={() => {
+                          const processed = uploadProgress.chunks_processed ?? 0;
+                          const total = uploadProgress.total_chunks ?? 0;
+                          console.log('🎯 进度条显示:', { processed, total, sub_percent: uploadProgress.sub_percent });
+                          return `${processed}/${total}`;
+                        }}
+                      />
+                    )}
+
+                    {/* 批次信息 */}
+                    {uploadProgress.batch_current && uploadProgress.batch_total && (
+                      <div style={{ marginTop: 4 }}>
+                        <Text type="secondary" style={{ fontSize: '12px' }}>
+                          🔄 批次进度: {uploadProgress.batch_current}/{uploadProgress.batch_total}
+                        </Text>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 成功状态显示 */}
+                {uploadProgress.chunks_processed && uploadProgress.stage === 'success' && (
                   <div style={{ marginTop: 4 }}>
                     <Text type="success">
-                      成功创建 {uploadProgress.chunks_created} 个文档块
+                      ✅ 成功创建 {uploadProgress.chunks_processed} 个文档块
+                    </Text>
+                  </div>
+                )}
+
+                {/* 阶段图标和描述 */}
+                {uploadProgress.stage !== 'error' && uploadProgress.stage !== 'success' && (
+                  <div style={{ marginTop: 4 }}>
+                    <Text type="secondary" style={{ fontSize: '12px' }}>
+                      {uploadProgress.stage === 'uploading' && '📤 正在上传文件到服务器...'}
+                      {uploadProgress.stage === 'processing' && '📄 正在解析文件内容...'}
+                      {uploadProgress.stage === 'chunking' && '✂️ 正在进行智能分块处理...'}
+                      {uploadProgress.stage === 'embedding' && '🧠 正在生成向量嵌入...'}
                     </Text>
                   </div>
                 )}
@@ -1187,10 +1229,10 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
               <Button
                 type="primary"
                 htmlType="submit"
-                disabled={!selectedFile || uploadProgress?.status === 'uploading'}
-                loading={uploadProgress?.status === 'uploading'}
+                disabled={!selectedFile || (uploadProgress !== null && uploadProgress.stage !== 'error' && uploadProgress.stage !== 'success')}
+                loading={uploadProgress !== null && uploadProgress.stage !== 'error' && uploadProgress.stage !== 'success'}
               >
-                {uploadProgress?.status === 'uploading' ? '上传中...' : '开始上传'}
+                {uploadProgress !== null && uploadProgress.stage !== 'error' && uploadProgress.stage !== 'success' ? '处理中...' : '开始上传'}
               </Button>
               <Button onClick={closeUploadModal}>
                 取消

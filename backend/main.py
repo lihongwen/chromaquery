@@ -4,7 +4,7 @@ ChromaDB Web Manager - 后端主应用
 支持中文集合名称的ChromaDB Web管理界面
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
@@ -13,7 +13,7 @@ from chromadb.config import Settings
 import chromadb.utils.embedding_functions as ef
 import uvicorn
 import logging
-from typing import List, Optional, AsyncGenerator
+from typing import List, Optional, AsyncGenerator, Callable
 import base64
 import hashlib
 from pydantic import BaseModel
@@ -23,6 +23,7 @@ import sqlite3
 import json
 from datetime import datetime, timedelta
 import time
+import asyncio
 from alibaba_embedding import create_alibaba_embedding_function
 from ollama_embedding import create_ollama_embedding_function, get_recommended_models, get_model_dimension, OllamaEmbeddingFunction
 from vector_optimization import (
@@ -35,7 +36,6 @@ from vector_optimization import (
 from fastapi import UploadFile, File, Form
 import tempfile
 import time
-import json
 import asyncio
 from file_parsers import file_parser_manager, FileFormat
 from config_manager import config_manager
@@ -233,6 +233,16 @@ class FileUploadResponse(BaseModel):
     processing_time: float
     collection_name: str
 
+class UploadProgressUpdate(BaseModel):
+    stage: str  # 'uploading', 'processing', 'chunking', 'embedding', 'success', 'error'
+    percent: int  # Overall progress percentage (0-100)
+    message: str  # Progress message
+    chunks_processed: Optional[int] = None  # Number of chunks processed so far
+    total_chunks: Optional[int] = None  # Total number of chunks to process
+    batch_current: Optional[int] = None  # Current batch number
+    batch_total: Optional[int] = None  # Total number of batches
+    sub_percent: Optional[int] = None  # Sub-progress within current stage
+
 class QueryRequest(BaseModel):
     query: str
     collections: List[str]
@@ -419,12 +429,31 @@ async def get_collections():
                     sample_result = collection.get(limit=1, include=["embeddings"])
                     if (sample_result and
                         sample_result.get('embeddings') and
-                        len(sample_result['embeddings']) > 0 and
-                        sample_result['embeddings'][0] is not None):
-                        dimension = len(sample_result['embeddings'][0])
-                        # 更新元数据中的维度信息
-                        metadata['vector_dimension'] = dimension
-                        logger.info(f"从实际向量中检测到集合 '{display_name}' 的维度: {dimension}")
+                        len(sample_result['embeddings']) > 0):
+
+                        # 获取第一个嵌入向量
+                        first_embedding = sample_result['embeddings'][0]
+
+                        # 增强的向量有效性检查
+                        if first_embedding is not None:
+                            # 检查是否为列表或数组类型
+                            if isinstance(first_embedding, (list, tuple)):
+                                if len(first_embedding) > 0:
+                                    # 检查向量元素是否为数值类型
+                                    if all(isinstance(x, (int, float)) for x in first_embedding[:5]):  # 只检查前5个元素以提高性能
+                                        dimension = len(first_embedding)
+                                        # 更新元数据中的维度信息
+                                        metadata['vector_dimension'] = dimension
+                                        logger.info(f"从实际向量中检测到集合 '{display_name}' 的维度: {dimension}")
+                                    else:
+                                        logger.warning(f"集合 '{display_name}' 的向量包含非数值元素，无法确定维度")
+                                else:
+                                    logger.warning(f"集合 '{display_name}' 的向量为空数组，无法确定维度")
+                            else:
+                                logger.warning(f"集合 '{display_name}' 的向量格式不正确，类型: {type(first_embedding)}")
+                        else:
+                            logger.warning(f"集合 '{display_name}' 的第一个向量为None，无法确定维度")
+
                 except Exception as e:
                     logger.warning(f"无法获取集合 '{display_name}' 的向量维度: {e}")
                     dimension = None
@@ -932,7 +961,12 @@ async def add_documents(collection_name: str, request: AddDocumentRequest):
 
                 # 使用Ollama嵌入函数生成向量
                 embeddings = ollama_embedding_func(request.documents)
-                logger.info(f"成功生成 {len(embeddings)} 个嵌入向量，维度: {len(embeddings[0]) if embeddings else 0}")
+                # 安全地获取向量维度
+                dimension_info = "未知"
+                if embeddings and len(embeddings) > 0 and embeddings[0] is not None:
+                    if isinstance(embeddings[0], (list, tuple)) and len(embeddings[0]) > 0:
+                        dimension_info = len(embeddings[0])
+                logger.info(f"成功生成 {len(embeddings)} 个嵌入向量，维度: {dimension_info}")
 
             except Exception as e:
                 logger.error(f"创建Ollama嵌入函数失败: {e}")
@@ -1060,7 +1094,6 @@ async def upload_document(
             chunking_result = None  # 表格文件不需要分块
         else:
             # 普通文件：解析分块配置并进行分块
-            import json
             try:
                 config_dict = json.loads(chunking_config)
                 config = ChunkingConfig(**config_dict)
@@ -1241,7 +1274,12 @@ async def upload_document(
                         logger.error(f"批次 {i//batch_size + 1} 嵌入向量生成失败: {e}")
                         raise e
 
-                logger.info(f"成功生成 {len(embeddings)} 个嵌入向量，维度: {len(embeddings[0]) if embeddings else 0}")
+                # 安全地获取向量维度
+                dimension_info = "未知"
+                if embeddings and len(embeddings) > 0 and embeddings[0] is not None:
+                    if isinstance(embeddings[0], (list, tuple)) and len(embeddings[0]) > 0:
+                        dimension_info = len(embeddings[0])
+                logger.info(f"成功生成 {len(embeddings)} 个嵌入向量，维度: {dimension_info}")
 
             except Exception as e:
                 logger.error(f"创建Ollama嵌入函数失败: {e}")
@@ -1307,6 +1345,553 @@ async def upload_document(
         logger.error(f"文档上传失败: {e}")
         logger.error(f"详细错误信息: {error_details}")
         raise HTTPException(status_code=500, detail=f"文档上传失败: {str(e)}")
+
+async def process_embeddings_with_progress(
+    target_collection,
+    documents: List[str],
+    metadatas: List[dict],
+    ids: List[str],
+    embedding_model: str,
+    collection_metadata: dict,
+    collection_name: str,
+    total_chunks: int,
+    generate_progress_callback: Callable[[int, int, dict], None]
+):
+    """处理嵌入向量生成，支持进度回调"""
+
+    embeddings = None
+    processed_chunks = 0
+
+    if embedding_model == 'alibaba-text-embedding-v4':
+        # 阿里云嵌入模型处理
+        try:
+            alibaba_embedding_func = create_alibaba_embedding_function(dimension=1024)
+            logger.info(f"为集合 '{collection_name}' 重新创建阿里云嵌入函数")
+
+            embeddings = []
+            batch_size = 10  # 阿里云API限制
+            total_batches = (len(documents) + batch_size - 1) // batch_size
+
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i:i + batch_size]
+                current_batch = i // batch_size + 1
+
+                logger.info(f"处理文档批次 {current_batch}: {len(batch)} 个文档")
+
+                try:
+                    batch_embeddings = alibaba_embedding_func(batch)
+                    embeddings.extend(batch_embeddings)
+                    processed_chunks += len(batch)
+
+                    # 发送进度更新
+                    batch_info = {'current': current_batch, 'total': total_batches}
+                    await generate_progress_callback(processed_chunks, total_chunks, batch_info)
+
+                    logger.info(f"成功生成批次 {current_batch} 的嵌入向量")
+                except Exception as e:
+                    logger.error(f"批次 {current_batch} 嵌入向量生成失败: {e}")
+                    raise e
+
+            logger.info(f"成功生成 {len(embeddings)} 个1024维向量")
+
+        except Exception as e:
+            logger.error(f"创建阿里云嵌入函数失败: {e}")
+            raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
+
+    elif embedding_model and embedding_model.startswith('ollama-'):
+        # Ollama嵌入模型处理
+        try:
+            ollama_model = embedding_model.replace('ollama-', '')
+            ollama_base_url = collection_metadata.get('ollama_base_url', 'http://localhost:11434')
+
+            ollama_embedding_func = create_ollama_embedding_function(
+                model_name=ollama_model,
+                base_url=ollama_base_url
+            )
+            logger.info(f"为集合 '{collection_name}' 重新创建Ollama嵌入函数: {ollama_model}")
+
+            embeddings = []
+            batch_size = 5  # Ollama批量处理限制
+            total_batches = (len(documents) + batch_size - 1) // batch_size
+
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i:i + batch_size]
+                current_batch = i // batch_size + 1
+
+                logger.info(f"处理文档批次 {current_batch}: {len(batch)} 个文档")
+
+                try:
+                    batch_embeddings = ollama_embedding_func(batch)
+                    embeddings.extend(batch_embeddings)
+                    processed_chunks += len(batch)
+
+                    # 发送进度更新
+                    batch_info = {'current': current_batch, 'total': total_batches}
+                    await generate_progress_callback(processed_chunks, total_chunks, batch_info)
+
+                    logger.info(f"成功生成批次 {current_batch} 的嵌入向量")
+                except Exception as e:
+                    logger.error(f"批次 {current_batch} 嵌入向量生成失败: {e}")
+                    raise e
+
+            # 安全地获取向量维度
+            dimension_info = "未知"
+            if embeddings and len(embeddings) > 0 and embeddings[0] is not None:
+                if isinstance(embeddings[0], (list, tuple)) and len(embeddings[0]) > 0:
+                    dimension_info = len(embeddings[0])
+            logger.info(f"成功生成 {len(embeddings)} 个嵌入向量，维度: {dimension_info}")
+
+        except Exception as e:
+            logger.error(f"创建Ollama嵌入函数失败: {e}")
+            raise HTTPException(status_code=500, detail=f"创建Ollama嵌入函数失败: {str(e)}")
+    else:
+        # 使用默认嵌入函数 - 逐个处理以提供进度更新
+        logger.info(f"集合 '{collection_name}' 使用默认嵌入函数")
+
+        # 对于默认嵌入函数，我们需要逐个添加文档以提供进度更新
+        for i, (doc, metadata, doc_id) in enumerate(zip(documents, metadatas, ids)):
+            try:
+                target_collection.add(
+                    documents=[doc],
+                    metadatas=[metadata],
+                    ids=[doc_id]
+                )
+                processed_chunks += 1
+
+                # 发送进度更新
+                await generate_progress_callback(processed_chunks, total_chunks, None)
+
+            except Exception as e:
+                logger.error(f"添加文档 {i+1} 失败: {e}")
+                raise e
+
+        # 对于默认嵌入函数，我们已经逐个添加了，所以直接返回
+        return
+
+    # 添加到ChromaDB（对于有预生成向量的情况）
+    logger.info(f"开始向量化和存储 {len(documents)} 个文档块到集合 '{collection_name}'")
+
+    if embeddings:
+        # 使用预生成的向量
+        target_collection.add(
+            documents=documents,
+            metadatas=metadatas,
+            ids=ids,
+            embeddings=embeddings
+        )
+    else:
+        # 使用集合的默认嵌入函数
+        target_collection.add(
+            documents=documents,
+            metadatas=metadatas,
+            ids=ids
+        )
+
+    logger.info(f"向量化和存储完成")
+
+async def process_embeddings_with_progress_sync(
+    target_collection,
+    documents: List[str],
+    metadatas: List[dict],
+    ids: List[str],
+    embedding_model: str,
+    collection_metadata: dict,
+    collection_name: str,
+    total_chunks: int,
+    progress_callback: Callable[[int, int, dict], None]
+):
+    """处理嵌入向量生成，支持同步进度回调"""
+
+    embeddings = None
+    processed_chunks = 0
+
+    if embedding_model == 'alibaba-text-embedding-v4':
+        # 阿里云嵌入模型处理
+        try:
+            alibaba_embedding_func = create_alibaba_embedding_function(dimension=1024)
+            logger.info(f"为集合 '{collection_name}' 重新创建阿里云嵌入函数")
+
+            embeddings = []
+            batch_size = 10  # 阿里云API限制
+            total_batches = (len(documents) + batch_size - 1) // batch_size
+
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i:i + batch_size]
+                current_batch = i // batch_size + 1
+
+                logger.info(f"处理文档批次 {current_batch}: {len(batch)} 个文档")
+
+                try:
+                    batch_embeddings = alibaba_embedding_func(batch)
+                    embeddings.extend(batch_embeddings)
+                    processed_chunks += len(batch)
+
+                    # 发送进度更新
+                    batch_info = {'current': current_batch, 'total': total_batches}
+                    progress_callback(processed_chunks, total_chunks, batch_info)
+
+                    logger.info(f"成功生成批次 {current_batch} 的嵌入向量")
+                except Exception as e:
+                    logger.error(f"批次 {current_batch} 嵌入向量生成失败: {e}")
+                    raise e
+
+            logger.info(f"成功生成 {len(embeddings)} 个1024维向量")
+
+        except Exception as e:
+            logger.error(f"创建阿里云嵌入函数失败: {e}")
+            raise HTTPException(status_code=500, detail=f"创建阿里云嵌入函数失败: {str(e)}")
+
+    elif embedding_model and embedding_model.startswith('ollama-'):
+        # Ollama嵌入模型处理
+        try:
+            ollama_model = embedding_model.replace('ollama-', '')
+            ollama_base_url = collection_metadata.get('ollama_base_url', 'http://localhost:11434')
+
+            ollama_embedding_func = create_ollama_embedding_function(
+                model_name=ollama_model,
+                base_url=ollama_base_url
+            )
+            logger.info(f"为集合 '{collection_name}' 重新创建Ollama嵌入函数: {ollama_model}")
+
+            embeddings = []
+            batch_size = 5  # Ollama批量处理限制
+            total_batches = (len(documents) + batch_size - 1) // batch_size
+
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i:i + batch_size]
+                current_batch = i // batch_size + 1
+
+                logger.info(f"处理文档批次 {current_batch}: {len(batch)} 个文档")
+
+                try:
+                    batch_embeddings = ollama_embedding_func(batch)
+                    embeddings.extend(batch_embeddings)
+                    processed_chunks += len(batch)
+
+                    # 发送进度更新
+                    batch_info = {'current': current_batch, 'total': total_batches}
+                    logger.info(f"🔄 Ollama批次 {current_batch} 完成，调用进度回调: {processed_chunks}/{total_chunks}")
+                    progress_callback(processed_chunks, total_chunks, batch_info)
+
+                    logger.info(f"成功生成批次 {current_batch} 的嵌入向量")
+                except Exception as e:
+                    logger.error(f"批次 {current_batch} 嵌入向量生成失败: {e}")
+                    raise e
+
+            # 安全地获取向量维度
+            dimension_info = "未知"
+            if embeddings and len(embeddings) > 0 and embeddings[0] is not None:
+                if isinstance(embeddings[0], (list, tuple)) and len(embeddings[0]) > 0:
+                    dimension_info = len(embeddings[0])
+            logger.info(f"成功生成 {len(embeddings)} 个嵌入向量，维度: {dimension_info}")
+
+        except Exception as e:
+            logger.error(f"创建Ollama嵌入函数失败: {e}")
+            raise HTTPException(status_code=500, detail=f"创建Ollama嵌入函数失败: {str(e)}")
+    else:
+        # 使用默认嵌入函数 - 逐个处理以提供进度更新
+        logger.info(f"集合 '{collection_name}' 使用默认嵌入函数")
+
+        # 对于默认嵌入函数，我们需要逐个添加文档以提供进度更新
+        for i, (doc, metadata, doc_id) in enumerate(zip(documents, metadatas, ids)):
+            try:
+                target_collection.add(
+                    documents=[doc],
+                    metadatas=[metadata],
+                    ids=[doc_id]
+                )
+                processed_chunks += 1
+
+                # 发送进度更新
+                progress_callback(processed_chunks, total_chunks, None)
+
+            except Exception as e:
+                logger.error(f"添加文档 {i+1} 失败: {e}")
+                raise e
+
+        # 对于默认嵌入函数，我们已经逐个添加了，所以直接返回
+        return
+
+    # 添加到ChromaDB（对于有预生成向量的情况）
+    logger.info(f"开始向量化和存储 {len(documents)} 个文档块到集合 '{collection_name}'")
+
+    if embeddings:
+        # 使用预生成的向量
+        target_collection.add(
+            documents=documents,
+            metadatas=metadatas,
+            ids=ids,
+            embeddings=embeddings
+        )
+
+        # 发送最终进度更新 - 所有文档都已存储
+        progress_callback(total_chunks, total_chunks, None)
+    else:
+        # 使用集合的默认嵌入函数
+        target_collection.add(
+            documents=documents,
+            metadatas=metadatas,
+            ids=ids
+        )
+
+        # 发送最终进度更新 - 所有文档都已存储
+        progress_callback(total_chunks, total_chunks, None)
+
+    logger.info(f"向量化和存储完成")
+
+@app.post("/api/collections/{collection_name}/upload-stream")
+async def upload_document_stream(
+    collection_name: str,
+    file: UploadFile = File(...),
+    chunking_config: str = Form(...)
+):
+    """上传文档文件并进行RAG分块处理 - 支持实时进度流"""
+
+    # 创建进度队列，设置较小的队列大小以确保实时性
+    progress_queue = asyncio.Queue(maxsize=1)
+
+    async def generate_progress():
+        start_time = time.time()
+        logger.info(f"开始流式处理文件上传: collection_name={collection_name}, file={file.filename}")
+
+        try:
+            # 发送初始进度
+            yield f"data: {json.dumps(UploadProgressUpdate(stage='uploading', percent=5, message='正在上传文件...').model_dump())}\n\n"
+
+            # 获取RAG分块器相关类
+            RAGChunker, ChunkingConfig, ChunkingMethod, get_default_chunking_config = get_rag_chunker()
+            if not ChunkingConfig:
+                yield f"data: {json.dumps(UploadProgressUpdate(stage='error', percent=0, message='RAG分块功能不可用').model_dump())}\n\n"
+                return
+
+            # 验证文件名
+            if not file.filename:
+                yield f"data: {json.dumps(UploadProgressUpdate(stage='error', percent=0, message='文件名不能为空').model_dump())}\n\n"
+                return
+
+            # 验证文件格式
+            if not file_parser_manager.can_parse(file.filename):
+                supported_extensions = file_parser_manager.get_supported_extensions()
+                yield f"data: {json.dumps(UploadProgressUpdate(stage='error', percent=0, message=f'不支持的文件格式。支持的格式: {', '.join(supported_extensions)}').model_dump())}\n\n"
+                return
+
+            # 读取文件内容
+            yield f"data: {json.dumps(UploadProgressUpdate(stage='processing', percent=15, message='正在读取文件内容...').model_dump())}\n\n"
+            content = await file.read()
+            file_size_mb = len(content) / (1024 * 1024)
+            logger.info(f"文件读取完成，大小: {file_size_mb:.2f}MB")
+
+            # 验证文件大小
+            if len(content) > 150 * 1024 * 1024:
+                yield f"data: {json.dumps(UploadProgressUpdate(stage='error', percent=0, message='文件大小不能超过 150MB').model_dump())}\n\n"
+                return
+
+            # 解析文件
+            yield f"data: {json.dumps(UploadProgressUpdate(stage='processing', percent=25, message='正在解析文件内容...').model_dump())}\n\n"
+            parse_result = file_parser_manager.parse_file(content, file.filename)
+
+            if not parse_result.success:
+                yield f"data: {json.dumps(UploadProgressUpdate(stage='error', percent=0, message=f'文件解析失败: {parse_result.error_message}').model_dump())}\n\n"
+                return
+
+            # 查找集合
+            collections = chroma_client.list_collections()
+            target_collection = None
+            for collection in collections:
+                metadata = collection.metadata or {}
+                if (metadata.get('original_name') == collection_name or collection.name == collection_name):
+                    target_collection = collection
+                    break
+
+            if not target_collection:
+                yield f"data: {json.dumps(UploadProgressUpdate(stage='error', percent=0, message=f'集合 \'{collection_name}\' 不存在').model_dump())}\n\n"
+                return
+
+            # 处理文档数据
+            yield f"data: {json.dumps(UploadProgressUpdate(stage='chunking', percent=35, message='正在进行RAG分块处理...').model_dump())}\n\n"
+
+            documents = []
+            metadatas = []
+            ids = []
+
+            # 根据文件类型处理
+            if parse_result.is_table and parse_result.table_data:
+                # 表格文件处理
+                for row_idx, row_data in enumerate(parse_result.table_data):
+                    # 构建文档内容和元数据（简化版本）
+                    content_columns = [col for col, type_ in parse_result.column_analysis.items() if type_ == 'content']
+                    content_parts = []
+                    for col in content_columns:
+                        if col in row_data and row_data[col] is not None and str(row_data[col]).strip():
+                            content_parts.append(f"{col}: {str(row_data[col]).strip()}")
+
+                    if content_parts:
+                        document_text = " | ".join(content_parts)
+                    else:
+                        all_parts = []
+                        for col, value in row_data.items():
+                            if value is not None and str(value).strip():
+                                all_parts.append(f"{col}: {str(value).strip()}")
+                        document_text = " | ".join(all_parts)
+
+                    documents.append(document_text)
+
+                    metadata = {
+                        "file_name": file.filename,
+                        "file_format": parse_result.file_format.value if parse_result.file_format else "unknown",
+                        "is_table": "true",
+                        "row_index": row_idx,
+                        "upload_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "total_rows": len(parse_result.table_data)
+                    }
+                    metadatas.append(metadata)
+
+                    import uuid
+                    doc_id = f"{file.filename}_row_{row_idx}_{str(uuid.uuid4())[:8]}"
+                    ids.append(doc_id)
+            else:
+                # 普通文件处理
+                try:
+                    config_dict = json.loads(chunking_config)
+                    config = ChunkingConfig(**config_dict)
+                except Exception as e:
+                    yield f"data: {json.dumps(UploadProgressUpdate(stage='error', percent=0, message=f'分块配置格式错误: {e}').model_dump())}\n\n"
+                    return
+
+                text_content = parse_result.content
+                if not text_content.strip():
+                    yield f"data: {json.dumps(UploadProgressUpdate(stage='error', percent=0, message='文件中未提取到有效文本内容').model_dump())}\n\n"
+                    return
+
+                # 进行RAG分块
+                chunker = RAGChunker()
+                chunking_result = chunker.chunk_text(text_content, config)
+
+                for chunk in chunking_result.chunks:
+                    documents.append(chunk.text)
+
+                    metadata = {
+                        "file_name": file.filename,
+                        "file_format": parse_result.file_format.value if parse_result.file_format else "unknown",
+                        "is_table": "false",
+                        "chunk_method": config.method.value,
+                        "chunk_index": chunk.index,
+                        "chunk_size": len(chunk.text),
+                        "start_position": chunk.start_pos,
+                        "end_position": chunk.end_pos,
+                        "upload_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "total_chunks": chunking_result.total_chunks
+                    }
+                    metadatas.append(metadata)
+
+                    import uuid
+                    chunk_id = f"{file.filename}_{chunk.index}_{str(uuid.uuid4())[:8]}"
+                    ids.append(chunk_id)
+
+            total_chunks = len(documents)
+            yield f"data: {json.dumps(UploadProgressUpdate(stage='embedding', percent=70, message=f'开始生成向量嵌入，共 {total_chunks} 个文档块...', total_chunks=total_chunks, chunks_processed=0).model_dump())}\n\n"
+
+            # 检查集合使用的嵌入模型并处理向量化
+            collection_metadata = target_collection.metadata or {}
+            embedding_model = collection_metadata.get('embedding_model')
+
+            # 清理所有元数据
+            sanitized_metadatas = [sanitize_metadata(metadata) for metadata in metadatas]
+
+            # 创建进度回调函数
+            def send_embedding_progress(processed: int, total: int, batch_info: dict = None):
+                # 计算嵌入阶段的子进度 (70% - 95%)
+                embedding_progress = int(70 + (processed / total) * 25)
+                sub_progress = int((processed / total) * 100)
+
+                message = f"正在生成向量嵌入并存储... 已保存 {processed} / {total} 个文档块"
+                if batch_info:
+                    message += f" (批次 {batch_info['current']}/{batch_info['total']})"
+
+                progress_update = UploadProgressUpdate(
+                    stage='embedding',
+                    percent=embedding_progress,
+                    message=message,
+                    chunks_processed=processed,
+                    total_chunks=total,
+                    sub_percent=sub_progress,
+                    batch_current=batch_info['current'] if batch_info else None,
+                    batch_total=batch_info['total'] if batch_info else None
+                )
+
+                # 将进度更新放入队列，清空旧更新确保实时性
+                try:
+                    # 清空队列中的旧进度更新，只保留最新的
+                    while not progress_queue.empty():
+                        try:
+                            progress_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+
+                    progress_queue.put_nowait(progress_update)
+                    # 增强日志输出，显示完整的进度信息
+                    logger.info(f"📊 进度更新发送: {processed}/{total} ({embedding_progress}%) - chunks_processed={processed}, total_chunks={total}, sub_percent={sub_progress}")
+                except asyncio.QueueFull:
+                    logger.warning("Progress queue is full, skipping update")
+
+            # 启动处理任务
+            processing_task = asyncio.create_task(
+                process_embeddings_with_progress_sync(
+                    target_collection, documents, sanitized_metadatas, ids,
+                    embedding_model, collection_metadata, collection_name,
+                    total_chunks, progress_callback=send_embedding_progress
+                )
+            )
+
+            # 监听进度更新并发送
+            while not processing_task.done():
+                try:
+                    # 等待进度更新，超时时间短一些以便检查任务状态
+                    progress_update = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+
+                    # 立即发送进度更新
+                    progress_data = progress_update.model_dump()
+                    logger.info(f"🚀 发送进度数据到前端: {progress_data}")
+                    yield f"data: {json.dumps(progress_data)}\n\n"
+
+                except asyncio.TimeoutError:
+                    # 超时是正常的，继续循环
+                    continue
+                except Exception as e:
+                    logger.error(f"Progress update error: {e}")
+                    break
+
+            # 等待处理任务完成
+            await processing_task
+
+            # 处理队列中剩余的进度更新（应该很少或没有）
+            while not progress_queue.empty():
+                try:
+                    progress_update = progress_queue.get_nowait()
+                    progress_data = progress_update.model_dump()
+                    yield f"data: {json.dumps(progress_data)}\n\n"
+                except asyncio.QueueEmpty:
+                    break
+
+            processing_time = time.time() - start_time
+
+            # 发送完成消息
+            if parse_result.is_table:
+                message = f"表格文件 '{file.filename}' 上传成功，创建了 {len(documents)} 行数据"
+            else:
+                message = f"文档 '{file.filename}' 上传成功，创建了 {len(documents)} 个文档块"
+
+            final_progress = UploadProgressUpdate(stage='success', percent=100, message=message, chunks_processed=total_chunks, total_chunks=total_chunks)
+            yield f"data: {json.dumps(final_progress.model_dump())}\n\n"
+
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"流式文档上传失败: {e}")
+            logger.error(f"详细错误信息: {error_details}")
+            yield f"data: {json.dumps(UploadProgressUpdate(stage='error', percent=0, message=f'文档上传失败: {str(e)}').model_dump())}\n\n"
+
+    return StreamingResponse(generate_progress(), media_type="text/plain")
 
 @app.get("/api/supported-formats")
 async def get_supported_formats():
