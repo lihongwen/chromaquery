@@ -1647,8 +1647,8 @@ async def upload_document_stream(
 ):
     """上传文档文件并进行RAG分块处理 - 支持实时进度流"""
 
-    # 创建进度队列，设置较小的队列大小以确保实时性
-    progress_queue = asyncio.Queue(maxsize=1)
+    # 创建进度队列，增加队列大小以避免丢失进度更新
+    progress_queue = asyncio.Queue(maxsize=10)
 
     async def generate_progress():
         start_time = time.time()
@@ -1803,11 +1803,34 @@ async def upload_document_stream(
             # 清理所有元数据
             sanitized_metadatas = [sanitize_metadata(metadata) for metadata in metadatas]
 
-            # 创建进度回调函数
+            # 创建进度回调函数，添加节流机制
+            last_progress_time = [0]  # 使用列表以便在闭包中修改
+            last_progress_percent = [0]
+
             def send_embedding_progress(processed: int, total: int, batch_info: dict = None):
                 # 计算嵌入阶段的子进度 (65% - 90%) - 与前端保持一致
                 embedding_progress = int(65 + (processed / total) * 25)
                 sub_progress = int((processed / total) * 100)
+
+                # 节流机制：限制更新频率，避免过于频繁的更新
+                current_time = time.time()
+                time_since_last = current_time - last_progress_time[0]
+                progress_diff = abs(embedding_progress - last_progress_percent[0])
+
+                # 只有在以下情况下才发送更新：
+                # 1. 距离上次更新超过0.5秒
+                # 2. 进度变化超过2%
+                # 3. 是最后一个更新 (processed == total)
+                # 4. 是批次完成的更新 (batch_info存在)
+                should_update = (
+                    time_since_last >= 0.5 or
+                    progress_diff >= 2 or
+                    processed == total or
+                    batch_info is not None
+                )
+
+                if not should_update:
+                    return
 
                 message = f"正在生成向量嵌入并存储... 已保存 {processed} / {total} 个文档块"
                 if batch_info:
@@ -1824,20 +1847,23 @@ async def upload_document_stream(
                     batch_total=batch_info['total'] if batch_info else None
                 )
 
-                # 将进度更新放入队列，清空旧更新确保实时性
-                try:
-                    # 清空队列中的旧进度更新，只保留最新的
-                    while not progress_queue.empty():
-                        try:
-                            progress_queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
+                # 更新节流状态
+                last_progress_time[0] = current_time
+                last_progress_percent[0] = embedding_progress
 
+                # 将进度更新放入队列，不清空旧更新以确保所有进度都被发送
+                try:
                     progress_queue.put_nowait(progress_update)
                     # 增强日志输出，显示完整的进度信息
                     logger.info(f"📊 进度更新发送: {processed}/{total} ({embedding_progress}%) - chunks_processed={processed}, total_chunks={total}, sub_percent={sub_progress}")
                 except asyncio.QueueFull:
-                    logger.warning("Progress queue is full, skipping update")
+                    # 如果队列满了，移除最老的更新并添加新的
+                    try:
+                        progress_queue.get_nowait()  # 移除最老的更新
+                        progress_queue.put_nowait(progress_update)
+                        logger.info(f"📊 队列已满，替换最老的进度更新: {processed}/{total} ({embedding_progress}%)")
+                    except asyncio.QueueEmpty:
+                        logger.warning("Progress queue management error")
 
             # 启动处理任务
             processing_task = asyncio.create_task(
@@ -1849,10 +1875,14 @@ async def upload_document_stream(
             )
 
             # 监听进度更新并发送
+            consecutive_timeouts = 0
+            max_consecutive_timeouts = 50  # 最多连续超时50次 (5秒)
+
             while not processing_task.done():
                 try:
-                    # 等待进度更新，超时时间短一些以便检查任务状态
+                    # 等待进度更新，适当的超时时间以便检查任务状态
                     progress_update = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+                    consecutive_timeouts = 0  # 重置超时计数
 
                     # 立即发送进度更新
                     progress_data = progress_update.model_dump()
@@ -1860,7 +1890,13 @@ async def upload_document_stream(
                     yield f"data: {json.dumps(progress_data)}\n\n"
 
                 except asyncio.TimeoutError:
-                    # 超时是正常的，继续循环
+                    # 超时是正常的，但要防止无限等待
+                    consecutive_timeouts += 1
+                    if consecutive_timeouts >= max_consecutive_timeouts:
+                        logger.warning(f"连续超时 {consecutive_timeouts} 次，检查处理任务状态")
+                        if processing_task.done():
+                            break
+                        consecutive_timeouts = 0  # 重置计数继续等待
                     continue
                 except Exception as e:
                     logger.error(f"Progress update error: {e}")
@@ -1869,14 +1905,20 @@ async def upload_document_stream(
             # 等待处理任务完成
             await processing_task
 
-            # 处理队列中剩余的进度更新（应该很少或没有）
+            # 处理队列中剩余的进度更新，确保所有更新都被发送
+            remaining_updates = 0
             while not progress_queue.empty():
                 try:
                     progress_update = progress_queue.get_nowait()
                     progress_data = progress_update.model_dump()
                     yield f"data: {json.dumps(progress_data)}\n\n"
+                    remaining_updates += 1
+                    logger.info(f"📤 发送剩余进度更新: {progress_data}")
                 except asyncio.QueueEmpty:
                     break
+
+            if remaining_updates > 0:
+                logger.info(f"📊 发送了 {remaining_updates} 个剩余的进度更新")
 
             processing_time = time.time() - start_time
 
