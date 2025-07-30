@@ -373,7 +373,11 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                 // 添加调试日志
                 console.log('📊 前端接收到进度数据:', progressData);
 
-                setUploadProgress(progressData);
+                // 使用函数式更新确保状态正确更新
+                setUploadProgress(prev => {
+                  console.log('🔄 状态更新: 从', prev, '到', progressData);
+                  return progressData;
+                });
 
                 // 如果是成功状态，显示成功消息
                 if (progressData.stage === 'success') {
@@ -1175,17 +1179,24 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
                   <div style={{ marginTop: 8 }}>
                     {/* 子进度条 */}
                     {uploadProgress.sub_percent !== undefined && (
-                      <Progress
-                        percent={uploadProgress.sub_percent}
-                        size="small"
-                        strokeColor="#52c41a"
-                        format={() => {
-                          const processed = uploadProgress.chunks_processed ?? 0;
-                          const total = uploadProgress.total_chunks ?? 0;
-                          console.log('🎯 进度条显示:', { processed, total, sub_percent: uploadProgress.sub_percent });
-                          return `${processed}/${total}`;
-                        }}
-                      />
+                      <div>
+                        <Progress
+                          percent={uploadProgress.sub_percent}
+                          size="small"
+                          strokeColor="#52c41a"
+                          format={() => {
+                            const processed = uploadProgress.chunks_processed ?? 0;
+                            const total = uploadProgress.total_chunks ?? 0;
+                            console.log('🎯 进度条显示:', { processed, total, sub_percent: uploadProgress.sub_percent });
+                            return `${processed}/${total}`;
+                          }}
+                        />
+                        {/* 添加额外的文本显示确保数据可见 */}
+                        <div style={{ marginTop: 4, fontSize: '12px', color: '#666' }}>
+                          📊 实时进度: {uploadProgress.chunks_processed ?? 0} / {uploadProgress.total_chunks ?? 0}
+                          ({uploadProgress.sub_percent ?? 0}%)
+                        </div>
+                      </div>
                     )}
 
                     {/* 批次信息 */}
