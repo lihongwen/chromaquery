@@ -1,0 +1,23 @@
+{
+  "chroma_db_path": "",
+  "path_history": [],
+  "last_updated": "",
+  "max_history_count": 10,
+  "embedding_config": {
+    "default_provider": "ollama",
+    "alibaba": {
+      "model": "text-embedding-v4",
+      "dimension": 1024,
+      "api_key": "",
+      "verified": false,
+      "last_verified": null
+    },
+    "ollama": {
+      "model": "snowflake-arctic-embed:335m",
+      "base_url": "http://localhost:11434",
+      "timeout": 60,
+      "verified": false,
+      "last_verified": null
+    }
+  }
+}
