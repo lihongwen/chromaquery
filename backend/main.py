@@ -1789,7 +1789,8 @@ async def upload_document_stream(
                     ids.append(chunk_id)
 
             total_chunks = len(documents)
-            yield f"data: {json.dumps(UploadProgressUpdate(stage='embedding', percent=70, message=f'开始生成向量嵌入，共 {total_chunks} 个文档块...', total_chunks=total_chunks, chunks_processed=0).model_dump())}\n\n"
+            # 不发送 chunks_processed=0 的初始化消息，避免覆盖实际进度
+            # yield f"data: {json.dumps(UploadProgressUpdate(stage='embedding', percent=70, message=f'开始生成向量嵌入，共 {total_chunks} 个文档块...', total_chunks=total_chunks, chunks_processed=0).model_dump())}\n\n"
 
             # 检查集合使用的嵌入模型并处理向量化
             collection_metadata = target_collection.metadata or {}
