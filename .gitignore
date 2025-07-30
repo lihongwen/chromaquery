@@ -38,6 +38,7 @@ data/*
 !data/.gitkeep
 chroma_data/*
 !chroma_data/.gitkeep
+chromadbdata/
 *.db
 *.sqlite
 *.sqlite3
@@ -162,6 +163,10 @@ tmp/
 temp/
 .tmp/
 .temp/
+
+# 测试文件
+test_*.py
+test_*.txt
 
 # 备份文件
 *.bak

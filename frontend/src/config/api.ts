@@ -116,6 +116,11 @@ export const api = {
   documents: {
     upload: (collectionName: string, formData: FormData) =>
       uploadApiClient.post(`/collections/${encodeURIComponent(collectionName)}/upload`, formData),
+    uploadStream: (collectionName: string, formData: FormData) =>
+      fetch(`${API_BASE_URL}/collections/${encodeURIComponent(collectionName)}/upload-stream`, {
+        method: 'POST',
+        body: formData,
+      }),
     delete: (collectionName: string, fileName: string) =>
       apiClient.delete(`/collections/${encodeURIComponent(collectionName)}/documents/${encodeURIComponent(fileName)}`),
   },
