@@ -892,6 +892,7 @@ async def rename_collection(request: RenameCollectionRequest):
 
         # 复制数据（如果有的话）
         data_copied = False
+        ids = None  # 初始化变量以便在整个函数中使用
         try:
             # 获取所有数据，包含所有字段
             logger.info(f"开始复制集合数据从 '{request.old_name}' 到 '{request.new_name}'")
@@ -902,24 +903,30 @@ async def rename_collection(request: RenameCollectionRequest):
                        f"documents={len(results.get('documents', []))}, "
                        f"metadatas={len(results.get('metadatas', []))}")
 
-            if results.get('ids') and len(results['ids']) > 0:
+            ids = results.get('ids')
+            if ids is not None and len(ids) > 0:
                 # 准备数据进行复制
                 add_params = {
-                    'ids': results['ids']
+                    'ids': ids
                 }
 
-                # 只添加非空的字段
-                if results.get('embeddings'):
-                    add_params['embeddings'] = results['embeddings']
-                if results.get('documents'):
-                    add_params['documents'] = results['documents']
-                if results.get('metadatas'):
-                    add_params['metadatas'] = results['metadatas']
+                # 只添加非空的字段，使用安全的数组检查方法
+                embeddings = results.get('embeddings')
+                if embeddings is not None and len(embeddings) > 0:
+                    add_params['embeddings'] = embeddings
+
+                documents = results.get('documents')
+                if documents is not None and len(documents) > 0:
+                    add_params['documents'] = documents
+
+                metadatas = results.get('metadatas')
+                if metadatas is not None and len(metadatas) > 0:
+                    add_params['metadatas'] = metadatas
 
                 # 添加到新集合
                 new_collection.add(**add_params)
                 data_copied = True
-                logger.info(f"成功复制 {len(results['ids'])} 条数据到新集合")
+                logger.info(f"成功复制 {len(ids)} 条数据到新集合")
             else:
                 logger.info("旧集合中没有数据需要复制")
                 data_copied = True  # 空集合也算复制成功
@@ -940,7 +947,7 @@ async def rename_collection(request: RenameCollectionRequest):
                 # 验证新集合中的数据
                 new_results = new_collection.get()
                 new_count = len(new_results.get('ids', []))
-                old_count = len(results.get('ids', []))
+                old_count = len(ids) if ids is not None else 0
 
                 if new_count != old_count:
                     logger.error(f"数据复制验证失败: 原集合 {old_count} 条，新集合 {new_count} 条")
@@ -970,7 +977,7 @@ async def rename_collection(request: RenameCollectionRequest):
             "message": f"集合从 '{request.old_name}' 重命名为 '{request.new_name}' 成功",
             "old_name": request.old_name,
             "new_name": request.new_name,
-            "data_count": len(results.get('ids', []))
+            "data_count": len(ids) if ids is not None else 0
         }
     except HTTPException:
         raise
