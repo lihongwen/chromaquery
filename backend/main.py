@@ -809,6 +809,14 @@ async def delete_collection(collection_name: str):
 async def rename_collection(request: RenameCollectionRequest):
     """重命名集合"""
     try:
+        # 验证输入参数
+        if not request.old_name or not request.old_name.strip():
+            raise HTTPException(status_code=400, detail="原集合名称不能为空")
+        if not request.new_name or not request.new_name.strip():
+            raise HTTPException(status_code=400, detail="新集合名称不能为空")
+        if request.old_name.strip() == request.new_name.strip():
+            raise HTTPException(status_code=400, detail="新名称与原名称相同")
+
         # 查找要重命名的集合
         collections = chroma_client.list_collections()
         old_collection = None
@@ -827,6 +835,8 @@ async def rename_collection(request: RenameCollectionRequest):
             metadata = collection.metadata or {}
             if metadata.get('original_name') == request.new_name:
                 raise HTTPException(status_code=400, detail=f"集合 '{request.new_name}' 已存在")
+
+        logger.info(f"开始重命名集合: '{request.old_name}' -> '{request.new_name}'")
 
         # 编码新名称
         new_encoded = encode_collection_name(request.new_name)
@@ -881,33 +891,153 @@ async def rename_collection(request: RenameCollectionRequest):
             )
 
         # 复制数据（如果有的话）
+        data_copied = False
         try:
-            # 获取所有数据
-            results = old_collection.get()
-            if results['ids']:
-                # 添加到新集合
-                new_collection.add(
-                    ids=results['ids'],
-                    embeddings=results.get('embeddings'),
-                    metadatas=results.get('metadatas'),
-                    documents=results.get('documents')
-                )
-        except Exception as e:
-            logger.warning(f"复制集合数据时出现警告: {e}")
+            # 获取所有数据，包含所有字段
+            logger.info(f"开始复制集合数据从 '{request.old_name}' 到 '{request.new_name}'")
+            results = old_collection.get(include=['embeddings', 'documents', 'metadatas'])
 
-        # 删除旧集合
-        chroma_client.delete_collection(old_collection.name)
+            logger.info(f"获取到数据: ids={len(results.get('ids', []))}, "
+                       f"embeddings={len(results.get('embeddings', []))}, "
+                       f"documents={len(results.get('documents', []))}, "
+                       f"metadatas={len(results.get('metadatas', []))}")
+
+            if results.get('ids') and len(results['ids']) > 0:
+                # 准备数据进行复制
+                add_params = {
+                    'ids': results['ids']
+                }
+
+                # 只添加非空的字段
+                if results.get('embeddings'):
+                    add_params['embeddings'] = results['embeddings']
+                if results.get('documents'):
+                    add_params['documents'] = results['documents']
+                if results.get('metadatas'):
+                    add_params['metadatas'] = results['metadatas']
+
+                # 添加到新集合
+                new_collection.add(**add_params)
+                data_copied = True
+                logger.info(f"成功复制 {len(results['ids'])} 条数据到新集合")
+            else:
+                logger.info("旧集合中没有数据需要复制")
+                data_copied = True  # 空集合也算复制成功
+
+        except Exception as e:
+            logger.error(f"复制集合数据失败: {e}")
+            # 如果数据复制失败，删除新创建的集合并抛出错误
+            try:
+                chroma_client.delete_collection(new_collection.name)
+                logger.info("已清理失败的新集合")
+            except:
+                pass
+            raise HTTPException(status_code=500, detail=f"数据复制失败: {str(e)}")
+
+        # 验证数据复制是否成功
+        if data_copied:
+            try:
+                # 验证新集合中的数据
+                new_results = new_collection.get()
+                new_count = len(new_results.get('ids', []))
+                old_count = len(results.get('ids', []))
+
+                if new_count != old_count:
+                    logger.error(f"数据复制验证失败: 原集合 {old_count} 条，新集合 {new_count} 条")
+                    # 清理失败的新集合
+                    try:
+                        chroma_client.delete_collection(new_collection.name)
+                    except:
+                        pass
+                    raise HTTPException(status_code=500, detail=f"数据复制不完整: 原集合 {old_count} 条，新集合 {new_count} 条")
+
+                logger.info(f"数据复制验证成功: {new_count} 条数据")
+
+                # 删除旧集合
+                chroma_client.delete_collection(old_collection.name)
+                logger.info(f"成功删除旧集合: {old_collection.name}")
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"删除旧集合失败: {e}")
+                # 如果删除旧集合失败，记录错误但不影响重命名结果
+                # 因为数据已经成功复制到新集合
+        else:
+            raise HTTPException(status_code=500, detail="数据复制验证失败")
 
         return {
             "message": f"集合从 '{request.old_name}' 重命名为 '{request.new_name}' 成功",
             "old_name": request.old_name,
-            "new_name": request.new_name
+            "new_name": request.new_name,
+            "data_count": len(results.get('ids', []))
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"重命名集合失败: {e}")
+        import traceback
+        logger.error(f"重命名集合详细错误: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"重命名集合失败: {str(e)}")
+
+@app.get("/api/collections/{collection_name}/debug")
+async def debug_collection_data(collection_name: str):
+    """调试集合数据 - 用于排查数据丢失问题"""
+    try:
+        # 查找集合
+        collections = chroma_client.list_collections()
+        target_collection = None
+
+        for collection in collections:
+            metadata = collection.metadata or {}
+            if (metadata.get('original_name') == collection_name or
+                collection.name == collection_name):
+                target_collection = collection
+                break
+
+        if not target_collection:
+            raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
+
+        # 获取集合的详细信息
+        try:
+            results = target_collection.get(include=['embeddings', 'documents', 'metadatas'])
+
+            debug_info = {
+                "collection_name": target_collection.name,
+                "display_name": target_collection.metadata.get('original_name', target_collection.name),
+                "metadata": target_collection.metadata,
+                "data_summary": {
+                    "total_ids": len(results.get('ids', [])),
+                    "has_embeddings": bool(results.get('embeddings')),
+                    "embeddings_count": len(results.get('embeddings', [])) if results.get('embeddings') else 0,
+                    "has_documents": bool(results.get('documents')),
+                    "documents_count": len(results.get('documents', [])) if results.get('documents') else 0,
+                    "has_metadatas": bool(results.get('metadatas')),
+                    "metadatas_count": len(results.get('metadatas', [])) if results.get('metadatas') else 0,
+                },
+                "sample_data": {
+                    "first_3_ids": results.get('ids', [])[:3],
+                    "first_document": results.get('documents', [None])[0] if results.get('documents') else None,
+                    "first_metadata": results.get('metadatas', [None])[0] if results.get('metadatas') else None,
+                }
+            }
+
+            return debug_info
+
+        except Exception as e:
+            logger.error(f"获取集合数据失败: {e}")
+            return {
+                "collection_name": target_collection.name,
+                "display_name": target_collection.metadata.get('original_name', target_collection.name),
+                "metadata": target_collection.metadata,
+                "error": f"获取数据失败: {str(e)}"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"调试集合数据失败: {e}")
+        raise HTTPException(status_code=500, detail=f"调试失败: {str(e)}")
 
 @app.post("/api/collections/{collection_name}/documents")
 async def add_documents(collection_name: str, request: AddDocumentRequest):
