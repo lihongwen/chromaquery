@@ -213,6 +213,15 @@ const QueryTab: React.FC = () => {
     fetchRoles();
   }, []);
 
+  // 保存对话到localStorage的辅助函数
+  const saveConversationsToStorage = useCallback((convs: Conversation[]) => {
+    try {
+      localStorage.setItem('chromadb_conversations', JSON.stringify(convs));
+    } catch (error) {
+      console.error('保存对话历史失败:', error);
+    }
+  }, []);
+
   // 对话管理函数
   const createNewConversation = useCallback(() => {
     const newConversation: Conversation = {
@@ -226,15 +235,6 @@ const QueryTab: React.FC = () => {
     setCurrentConversation(newConversation);
     saveConversationsToStorage(updatedConversations);
   }, [conversations, saveConversationsToStorage]);
-
-  // 保存对话到localStorage的辅助函数
-  const saveConversationsToStorage = useCallback((convs: Conversation[]) => {
-    try {
-      localStorage.setItem('chromadb_conversations', JSON.stringify(convs));
-    } catch (error) {
-      console.error('保存对话历史失败:', error);
-    }
-  }, []);
 
   const clearConversations = useCallback(() => {
     setConversations([]);
