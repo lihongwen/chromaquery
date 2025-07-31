@@ -20,7 +20,9 @@ import {
   Select,
   Tooltip,
   Drawer,
-  FloatButton
+  FloatButton,
+  Dropdown,
+  Modal
 } from 'antd';
 import {
   SendOutlined,
@@ -35,7 +37,8 @@ import {
   MessageOutlined,
   SettingOutlined,
   MenuOutlined,
-  DeleteOutlined
+  DeleteOutlined,
+  MoreOutlined
 } from '@ant-design/icons';
 import { useResponsive } from '../../hooks/useResponsive';
 import { api } from '../../config/api';
@@ -63,6 +66,21 @@ const userQueryTextStyle = `
   .message.user div, .message.assistant div {
     color: #1f2937 !important;
     -webkit-text-fill-color: #1f2937 !important;
+  }
+
+  /* 对话列表项悬停效果 */
+  .conversation-item:hover .conversation-menu-btn {
+    opacity: 1 !important;
+  }
+
+  .conversation-menu-btn {
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+  }
+
+  .conversation-menu-btn:hover {
+    opacity: 1 !important;
+    background-color: var(--ant-color-fill-quaternary) !important;
   }
 `;
 
@@ -206,8 +224,17 @@ const QueryTab: React.FC = () => {
     const updatedConversations = [newConversation, ...conversations];
     setConversations(updatedConversations);
     setCurrentConversation(newConversation);
-    saveConversations(updatedConversations);
-  }, [conversations]);
+    saveConversationsToStorage(updatedConversations);
+  }, [conversations, saveConversationsToStorage]);
+
+  // 保存对话到localStorage的辅助函数
+  const saveConversationsToStorage = useCallback((convs: Conversation[]) => {
+    try {
+      localStorage.setItem('chromadb_conversations', JSON.stringify(convs));
+    } catch (error) {
+      console.error('保存对话历史失败:', error);
+    }
+  }, []);
 
   const clearConversations = useCallback(() => {
     setConversations([]);
@@ -215,6 +242,42 @@ const QueryTab: React.FC = () => {
     localStorage.removeItem('chromadb_conversations');
     message.success('对话历史已清空');
   }, []);
+
+  const deleteConversation = useCallback((conversationId: string) => {
+    const conversationToDelete = conversations.find(conv => conv.id === conversationId);
+    if (!conversationToDelete) return;
+
+    Modal.confirm({
+      title: '删除对话',
+      content: `确定要删除对话"${conversationToDelete.title}"吗？此操作不可撤销。`,
+      okText: '删除',
+      cancelText: '取消',
+      okType: 'danger',
+      onOk: () => {
+        const updatedConversations = conversations.filter(conv => conv.id !== conversationId);
+        setConversations(updatedConversations);
+
+        // 如果删除的是当前对话，需要处理当前对话状态
+        if (currentConversation?.id === conversationId) {
+          // 如果还有其他对话，选择第一个；否则设为null
+          const nextConversation = updatedConversations.length > 0 ? updatedConversations[0] : null;
+          setCurrentConversation(nextConversation);
+
+          // 如果选择了新对话，更新选中的集合
+          if (nextConversation) {
+            const firstUserMessage = nextConversation.messages.find(msg => msg.type === 'user');
+            if (firstUserMessage && firstUserMessage.selected_collections) {
+              setSelectedCollections(firstUserMessage.selected_collections);
+            }
+          }
+        }
+
+        // 保存更新后的对话列表
+        saveConversationsToStorage(updatedConversations);
+        message.success('对话已删除');
+      }
+    });
+  }, [conversations, currentConversation, saveConversationsToStorage, setSelectedCollections]);
 
   const loadConversations = () => {
     try {
@@ -228,20 +291,12 @@ const QueryTab: React.FC = () => {
     }
   };
 
-  const saveConversations = useCallback((convs: Conversation[]) => {
-    try {
-      localStorage.setItem('chromadb_conversations', JSON.stringify(convs));
-    } catch (error) {
-      console.error('保存对话历史失败:', error);
-    }
-  }, []);
-
   // 监听对话变化自动保存
   useEffect(() => {
     if (conversations.length > 0) {
-      saveConversations(conversations);
+      saveConversationsToStorage(conversations);
     }
-  }, [conversations, saveConversations]);
+  }, [conversations, saveConversationsToStorage]);
 
   // 过滤对话列表
   const filteredConversations = conversations.filter(conv =>
@@ -684,66 +739,104 @@ const QueryTab: React.FC = () => {
               </div>
             )
           }}
-          renderItem={(conversation) => (
-            <List.Item
-              style={{
-                cursor: 'pointer',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                backgroundColor: currentConversation?.id === conversation.id
-                  ? 'var(--ant-color-primary-bg)'
-                  : 'transparent',
-                border: currentConversation?.id === conversation.id
-                  ? '1px solid var(--ant-color-primary-border)'
-                  : '1px solid transparent',
-                marginBottom: '4px',
-                transition: 'all 0.2s ease',
-              }}
-              onClick={() => {
-                setCurrentConversation(conversation);
-                // 当选择历史对话时，自动设置该对话使用的集合
-                const firstUserMessage = conversation.messages.find(msg => msg.type === 'user');
-                if (firstUserMessage && firstUserMessage.selected_collections) {
-                  setSelectedCollections(firstUserMessage.selected_collections);
-                }
-                if (isMobile) {
-                  setLeftDrawerVisible(false);
-                }
-              }}
-              onMouseEnter={(e) => {
-                if (currentConversation?.id !== conversation.id) {
-                  e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-quaternary)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (currentConversation?.id !== conversation.id) {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }
-              }}
-            >
-              <List.Item.Meta
-                title={
-                  <div style={{
-                    fontSize: '13px',
-                    fontWeight: currentConversation?.id === conversation.id ? 600 : 500,
-                    color: currentConversation?.id === conversation.id 
-                      ? 'var(--ant-color-primary)' 
-                      : 'var(--ant-color-text)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}>
-                    {conversation.title}
+          renderItem={(conversation) => {
+            const dropdownItems = [
+              {
+                key: 'delete',
+                label: '删除对话',
+                icon: <DeleteOutlined />,
+                danger: true,
+                onClick: () => deleteConversation(conversation.id)
+              }
+            ];
+
+            return (
+              <List.Item
+                className="conversation-item"
+                style={{
+                  cursor: 'pointer',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  backgroundColor: currentConversation?.id === conversation.id
+                    ? 'var(--ant-color-primary-bg)'
+                    : 'transparent',
+                  border: currentConversation?.id === conversation.id
+                    ? '1px solid var(--ant-color-primary-border)'
+                    : '1px solid transparent',
+                  marginBottom: '4px',
+                  transition: 'all 0.2s ease',
+                  position: 'relative',
+                }}
+                onClick={() => {
+                  setCurrentConversation(conversation);
+                  // 当选择历史对话时，自动设置该对话使用的集合
+                  const firstUserMessage = conversation.messages.find(msg => msg.type === 'user');
+                  if (firstUserMessage && firstUserMessage.selected_collections) {
+                    setSelectedCollections(firstUserMessage.selected_collections);
+                  }
+                  if (isMobile) {
+                    setLeftDrawerVisible(false);
+                  }
+                }}
+                onMouseEnter={(e) => {
+                  if (currentConversation?.id !== conversation.id) {
+                    e.currentTarget.style.backgroundColor = 'var(--ant-color-fill-quaternary)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (currentConversation?.id !== conversation.id) {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <List.Item.Meta
+                      title={
+                        <div style={{
+                          fontSize: '13px',
+                          fontWeight: currentConversation?.id === conversation.id ? 600 : 500,
+                          color: currentConversation?.id === conversation.id
+                            ? 'var(--ant-color-primary)'
+                            : 'var(--ant-color-text)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {conversation.title}
+                        </div>
+                      }
+                      description={
+                        <div style={{ fontSize: '11px', color: 'var(--ant-color-text-tertiary)' }}>
+                          {conversation.messages.length} 条消息 · {new Date(conversation.created_at).toLocaleDateString()}
+                        </div>
+                      }
+                    />
                   </div>
-                }
-                description={
-                  <div style={{ fontSize: '11px', color: 'var(--ant-color-text-tertiary)' }}>
-                    {conversation.messages.length} 条消息 · {new Date(conversation.created_at).toLocaleDateString()}
-                  </div>
-                }
-              />
-            </List.Item>
-          )}
+
+                  <Dropdown
+                    menu={{ items: dropdownItems }}
+                    trigger={['click']}
+                    placement="bottomRight"
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<MoreOutlined />}
+                      className="conversation-menu-btn"
+                      style={{
+                        marginLeft: '8px',
+                        flexShrink: 0,
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation(); // 防止触发对话选择
+                      }}
+                    />
+                  </Dropdown>
+                </div>
+              </List.Item>
+            );
+          }}
         />
       </div>
 
