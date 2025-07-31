@@ -745,10 +745,15 @@ const QueryTab: React.FC = () => {
                 key: 'delete',
                 label: '删除对话',
                 icon: <DeleteOutlined />,
-                danger: true,
-                onClick: () => deleteConversation(conversation.id)
+                danger: true
               }
             ];
+
+            const handleMenuClick = (e: any) => {
+              if (e.key === 'delete') {
+                deleteConversation(conversation.id);
+              }
+            };
 
             return (
               <List.Item
@@ -815,7 +820,7 @@ const QueryTab: React.FC = () => {
                   </div>
 
                   <Dropdown
-                    menu={{ items: dropdownItems }}
+                    menu={{ items: dropdownItems, onClick: handleMenuClick }}
                     trigger={['click']}
                     placement="bottomRight"
                   >
