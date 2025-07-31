@@ -48,7 +48,7 @@ import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
-  MessageOutlined
+
 } from '@ant-design/icons';
 import axios from 'axios';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -72,7 +72,7 @@ const maskApiKey = (apiKey: string): string => {
 };
 
 // 工具函数：切换API密钥显示状态
-const toggleApiKeyVisibility = (key: string, visible: Record<string, boolean>, setVisible: (value: Record<string, boolean>) => void) => {
+const toggleApiKeyVisibility = (key: string, setVisible: (value: (prev: Record<string, boolean>) => Record<string, boolean>) => void) => {
   setVisible(prev => ({ ...prev, [key]: !prev[key] }));
 };
 
@@ -371,7 +371,6 @@ const SettingsTab: React.FC = () => {
         setLlmConfig(response.data.full_config);
 
         // 如果有API密钥，设置为隐藏状态
-        const config = response.data.full_config;
         setApiKeyVisible(prev => ({
           ...prev,
           'llm-deepseek': false,
@@ -461,38 +460,7 @@ const SettingsTab: React.FC = () => {
     }
   };
 
-  // 测试嵌入模型配置
-  const testEmbeddingConfig = async (provider: string) => {
-    setModelTesting(true);
-    setModelTestResult(null);
 
-    try {
-      const config = provider === 'ollama' ? embeddingConfig.ollama_config : embeddingConfig.alibaba_config;
-      const response = await axios.post('/api/embedding-config/test', {
-        provider,
-        config
-      });
-
-      setModelTestResult({
-        success: response.data.success,
-        message: response.data.message
-      });
-
-      if (response.data.success) {
-        message.success('模型测试成功！');
-      } else {
-        message.error('模型测试失败');
-      }
-    } catch (error) {
-      setModelTestResult({
-        success: false,
-        message: '测试请求失败'
-      });
-      message.error('模型测试失败');
-    } finally {
-      setModelTesting(false);
-    }
-  };
 
   // 验证提供商配置
   const verifyProvider = async (provider: string) => {
@@ -859,7 +827,7 @@ const SettingsTab: React.FC = () => {
                   showSearch
                   placeholder="选择或输入模型名称"
                   optionFilterProp="children"
-                  mode="combobox"
+
                 >
                   {embeddingProviders.ollama?.models?.map(model => (
                     <Select.Option key={model.name} value={model.name}>
@@ -924,10 +892,10 @@ const SettingsTab: React.FC = () => {
       </Card>
 
       {/* 可用模型列表 */}
-      {embeddingProviders.ollama?.available && embeddingProviders.ollama.available_models && (
+      {embeddingProviders.ollama?.available && embeddingProviders.ollama.models && (
         <Card title="📋 可用的Ollama嵌入模型" style={{ marginBottom: 16 }}>
           <List
-            dataSource={embeddingProviders.ollama.available_models}
+            dataSource={embeddingProviders.ollama.models}
             renderItem={(model: any) => (
               <List.Item>
                 <List.Item.Meta

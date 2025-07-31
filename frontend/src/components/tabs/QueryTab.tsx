@@ -16,13 +16,11 @@ import {
   Typography,
   message,
   Spin,
-  Empty,
   Select,
   Tooltip,
   Drawer,
   FloatButton,
-  Dropdown,
-  Modal
+  Dropdown
 } from 'antd';
 import {
   SendOutlined,
@@ -35,8 +33,6 @@ import {
   DatabaseOutlined,
   PlusOutlined,
   MessageOutlined,
-  SettingOutlined,
-  MenuOutlined,
   DeleteOutlined,
   MoreOutlined
 } from '@ant-design/icons';
@@ -260,8 +256,6 @@ const QueryTab: React.FC = () => {
           setCurrentConversation(null);
           // 清空选中的集合，让用户重新选择
           setSelectedCollections([]);
-          // 清空消息列表，确保界面完全重置
-          setMessages([]);
         }
 
         // 保存更新后的对话列表
@@ -425,7 +419,7 @@ const QueryTab: React.FC = () => {
         similarity_threshold: settings.similarity_threshold,
         max_tokens: settings.max_tokens,
         temperature: settings.temperature,
-        role_id: selectedRoleId, // 添加角色ID参数
+        role_id: selectedRoleId || undefined, // 添加角色ID参数
       });
 
       if (!response.ok) {
@@ -1492,7 +1486,7 @@ const QueryTab: React.FC = () => {
                 optionLabelProp="label"
                 getPopupContainer={(triggerNode) => triggerNode.parentElement || document.body}
                 filterOption={(input, option) =>
-                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                 }
               >
                 {collections.map((collection) => (
@@ -1528,7 +1522,7 @@ const QueryTab: React.FC = () => {
                           {collection.display_name}
                         </span>
                       </div>
-                      <Tag size="small" style={{ flexShrink: 0, marginLeft: 8 }}>
+                      <Tag style={{ flexShrink: 0, marginLeft: 8 }}>
                         {collection.count}
                       </Tag>
                     </div>
@@ -1543,7 +1537,6 @@ const QueryTab: React.FC = () => {
                 <Alert
                   message="请选择至少一个集合进行查询"
                   type="warning"
-                  size="small"
                   showIcon
                   style={{ marginBottom: 12 }}
                 />
@@ -1554,7 +1547,6 @@ const QueryTab: React.FC = () => {
                   message="暂无可用集合"
                   description="请先在集合管理页面创建集合，然后刷新此页面"
                   type="info"
-                  size="small"
                   showIcon
                   action={
                     <Button size="small" onClick={fetchCollections}>

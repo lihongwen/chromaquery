@@ -480,21 +480,7 @@ const CollectionDetail: React.FC<CollectionDetailProps> = ({
     }));
   };
 
-  // 获取所有文档数据（不分组）
-  const getAllDocuments = () => {
-    if (!collectionDetail) return [];
 
-    const documents = collectionDetail.documents.length > 0
-      ? collectionDetail.documents
-      : collectionDetail.sample_documents;
-
-    return documents.map((doc, index) => ({
-      ...doc,
-      key: doc.id || `doc-${index}`,
-      index: index + 1,
-      metadata: doc.metadata || {}
-    }));
-  };
 
   // 获取分页后的文档数据（按文件分组）
   const getPaginatedDocuments = () => {

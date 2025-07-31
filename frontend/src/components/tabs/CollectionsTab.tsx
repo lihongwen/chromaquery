@@ -26,9 +26,7 @@ import {
 } from 'antd';
 import {
   DatabaseOutlined,
-  FileTextOutlined,
   StarOutlined,
-  TagOutlined,
   PlusOutlined,
   ImportOutlined,
   EyeOutlined,
@@ -90,7 +88,7 @@ const CollectionsTab: React.FC = () => {
 
   // 嵌入模型相关状态
   const [embeddingProviders, setEmbeddingProviders] = useState<any>({});
-  const [embeddingConfig, setEmbeddingConfig] = useState<any>({});
+
   const [modelsLoading, setModelsLoading] = useState(false);
 
   useEffect(() => {
@@ -277,7 +275,7 @@ const CollectionsTab: React.FC = () => {
     if (!currentCollection) return;
 
     try {
-      const { display_name, description, tags } = values;
+      const { display_name } = values;
 
       // 检查是否需要重命名
       if (display_name !== currentCollection.display_name) {
@@ -651,7 +649,7 @@ const CollectionsTab: React.FC = () => {
                       }}
                       okText="确定"
                       cancelText="取消"
-                      onClick={(e) => e?.stopPropagation()}
+
                     >
                       <Tooltip title="删除集合">
                         <DeleteOutlined
@@ -965,7 +963,7 @@ const CollectionsTab: React.FC = () => {
                 <Select.Option value="alibaba">
                   <Space>
                     阿里云百炼模型
-                    <Tag color="green" size="small">已验证</Tag>
+                    <Tag color="green">已验证</Tag>
                   </Space>
                 </Select.Option>
               )}
@@ -973,7 +971,7 @@ const CollectionsTab: React.FC = () => {
                 <Select.Option value="ollama">
                   <Space>
                     Ollama本地模型
-                    <Tag color="green" size="small">已验证</Tag>
+                    <Tag color="green">已验证</Tag>
                   </Space>
                 </Select.Option>
               )}
@@ -1001,15 +999,15 @@ const CollectionsTab: React.FC = () => {
                         placeholder="选择或输入模型名称"
                         style={{ height: '40px' }}
                         showSearch
-                        mode="combobox"
+
                         optionFilterProp="children"
                       >
                         {embeddingProviders.ollama?.models?.map((model: any) => (
                           <Select.Option key={model.name} value={model.name}>
                             <Space>
                               {model.name}
-                              {model.recommended && <Tag color="blue" size="small">推荐</Tag>}
-                              {model.available && <Tag color="green" size="small">已安装</Tag>}
+                              {model.recommended && <Tag color="blue">推荐</Tag>}
+                              {model.available && <Tag color="green">已安装</Tag>}
                             </Space>
                           </Select.Option>
                         ))}
