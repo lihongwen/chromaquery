@@ -13,7 +13,7 @@ from chromadb.config import Settings
 import chromadb.utils.embedding_functions as ef
 import uvicorn
 import logging
-from typing import List, Optional, AsyncGenerator, Callable
+from typing import List, Optional, AsyncGenerator, Callable, Awaitable
 import base64
 import hashlib
 from pydantic import BaseModel
@@ -1355,7 +1355,7 @@ async def process_embeddings_with_progress(
     collection_metadata: dict,
     collection_name: str,
     total_chunks: int,
-    generate_progress_callback: Callable[[int, int, dict], None]
+    generate_progress_callback: Callable[[int, int, dict], Awaitable[None]]
 ):
     """处理嵌入向量生成，支持进度回调"""
 
@@ -1379,13 +1379,18 @@ async def process_embeddings_with_progress(
                 logger.info(f"处理文档批次 {current_batch}: {len(batch)} 个文档")
 
                 try:
-                    batch_embeddings = alibaba_embedding_func(batch)
+                    # 使用线程池执行阻塞的嵌入函数调用，避免阻塞事件循环
+                    loop = asyncio.get_event_loop()
+                    batch_embeddings = await loop.run_in_executor(None, alibaba_embedding_func, batch)
                     embeddings.extend(batch_embeddings)
                     processed_chunks += len(batch)
 
                     # 发送进度更新
                     batch_info = {'current': current_batch, 'total': total_batches}
                     await generate_progress_callback(processed_chunks, total_chunks, batch_info)
+
+                    # 短暂延迟以确保进度更新被处理
+                    await asyncio.sleep(0.01)
 
                     logger.info(f"成功生成批次 {current_batch} 的嵌入向量")
                 except Exception as e:
@@ -1421,13 +1426,18 @@ async def process_embeddings_with_progress(
                 logger.info(f"处理文档批次 {current_batch}: {len(batch)} 个文档")
 
                 try:
-                    batch_embeddings = ollama_embedding_func(batch)
+                    # 使用线程池执行阻塞的嵌入函数调用，避免阻塞事件循环
+                    loop = asyncio.get_event_loop()
+                    batch_embeddings = await loop.run_in_executor(None, ollama_embedding_func, batch)
                     embeddings.extend(batch_embeddings)
                     processed_chunks += len(batch)
 
                     # 发送进度更新
                     batch_info = {'current': current_batch, 'total': total_batches}
                     await generate_progress_callback(processed_chunks, total_chunks, batch_info)
+
+                    # 短暂延迟以确保进度更新被处理
+                    await asyncio.sleep(0.01)
 
                     logger.info(f"成功生成批次 {current_batch} 的嵌入向量")
                 except Exception as e:
@@ -1451,15 +1461,20 @@ async def process_embeddings_with_progress(
         # 对于默认嵌入函数，我们需要逐个添加文档以提供进度更新
         for i, (doc, metadata, doc_id) in enumerate(zip(documents, metadatas, ids)):
             try:
-                target_collection.add(
+                # 使用线程池执行阻塞的ChromaDB操作，避免阻塞事件循环
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, lambda: target_collection.add(
                     documents=[doc],
                     metadatas=[metadata],
                     ids=[doc_id]
-                )
+                ))
                 processed_chunks += 1
 
                 # 发送进度更新
                 await generate_progress_callback(processed_chunks, total_chunks, None)
+
+                # 短暂延迟以确保进度更新被处理
+                await asyncio.sleep(0.01)
 
             except Exception as e:
                 logger.error(f"添加文档 {i+1} 失败: {e}")
@@ -1471,21 +1486,23 @@ async def process_embeddings_with_progress(
     # 添加到ChromaDB（对于有预生成向量的情况）
     logger.info(f"开始向量化和存储 {len(documents)} 个文档块到集合 '{collection_name}'")
 
+    # 使用线程池执行阻塞的ChromaDB操作，避免阻塞事件循环
+    loop = asyncio.get_event_loop()
     if embeddings:
         # 使用预生成的向量
-        target_collection.add(
+        await loop.run_in_executor(None, lambda: target_collection.add(
             documents=documents,
             metadatas=metadatas,
             ids=ids,
             embeddings=embeddings
-        )
+        ))
     else:
         # 使用集合的默认嵌入函数
-        target_collection.add(
+        await loop.run_in_executor(None, lambda: target_collection.add(
             documents=documents,
             metadatas=metadatas,
             ids=ids
-        )
+        ))
 
     logger.info(f"向量化和存储完成")
 
@@ -1807,7 +1824,7 @@ async def upload_document_stream(
             last_progress_time = [0]  # 使用列表以便在闭包中修改
             last_progress_percent = [0]
 
-            def send_embedding_progress(processed: int, total: int, batch_info: dict = None):
+            async def send_embedding_progress(processed: int, total: int, batch_info: dict = None):
                 # 计算嵌入阶段的子进度 (65% - 90%) - 与前端保持一致
                 embedding_progress = int(65 + (processed / total) * 25)
                 sub_progress = int((processed / total) * 100)
@@ -1851,26 +1868,20 @@ async def upload_document_stream(
                 last_progress_time[0] = current_time
                 last_progress_percent[0] = embedding_progress
 
-                # 将进度更新放入队列，不清空旧更新以确保所有进度都被发送
+                # 将进度更新放入队列，使用await确保立即处理
                 try:
-                    progress_queue.put_nowait(progress_update)
+                    await progress_queue.put(progress_update)
                     # 增强日志输出，显示完整的进度信息
-                    logger.info(f"📊 进度更新发送: {processed}/{total} ({embedding_progress}%) - chunks_processed={processed}, total_chunks={total}, sub_percent={sub_progress}")
-                except asyncio.QueueFull:
-                    # 如果队列满了，移除最老的更新并添加新的
-                    try:
-                        progress_queue.get_nowait()  # 移除最老的更新
-                        progress_queue.put_nowait(progress_update)
-                        logger.info(f"📊 队列已满，替换最老的进度更新: {processed}/{total} ({embedding_progress}%)")
-                    except asyncio.QueueEmpty:
-                        logger.warning("Progress queue management error")
+                    logger.info(f"📊 进度更新立即发送: {processed}/{total} ({embedding_progress}%) - chunks_processed={processed}, total_chunks={total}, sub_percent={sub_progress}")
+                except Exception as e:
+                    logger.error(f"Progress queue put error: {e}")
 
-            # 启动处理任务
+            # 启动处理任务 - 使用异步版本以支持实时进度更新
             processing_task = asyncio.create_task(
-                process_embeddings_with_progress_sync(
+                process_embeddings_with_progress(
                     target_collection, documents, sanitized_metadatas, ids,
                     embedding_model, collection_metadata, collection_name,
-                    total_chunks, progress_callback=send_embedding_progress
+                    total_chunks, generate_progress_callback=send_embedding_progress
                 )
             )
 
