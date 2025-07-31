@@ -247,36 +247,27 @@ const QueryTab: React.FC = () => {
     const conversationToDelete = conversations.find(conv => conv.id === conversationId);
     if (!conversationToDelete) return;
 
-    Modal.confirm({
-      title: '删除对话',
-      content: `确定要删除对话"${conversationToDelete.title}"吗？此操作不可撤销。`,
-      okText: '删除',
-      cancelText: '取消',
-      okType: 'danger',
-      onOk: () => {
+    // 使用 window.confirm 确保功能正常工作
+    const confirmed = window.confirm(`确定要删除对话"${conversationToDelete.title}"吗？此操作不可撤销。`);
+
+    if (confirmed) {
         const updatedConversations = conversations.filter(conv => conv.id !== conversationId);
         setConversations(updatedConversations);
 
         // 如果删除的是当前对话，需要处理当前对话状态
         if (currentConversation?.id === conversationId) {
-          // 如果还有其他对话，选择第一个；否则设为null
-          const nextConversation = updatedConversations.length > 0 ? updatedConversations[0] : null;
-          setCurrentConversation(nextConversation);
-
-          // 如果选择了新对话，更新选中的集合
-          if (nextConversation) {
-            const firstUserMessage = nextConversation.messages.find(msg => msg.type === 'user');
-            if (firstUserMessage && firstUserMessage.selected_collections) {
-              setSelectedCollections(firstUserMessage.selected_collections);
-            }
-          }
+          // 删除当前对话后，清空当前对话状态，回到初始界面
+          setCurrentConversation(null);
+          // 清空选中的集合，让用户重新选择
+          setSelectedCollections([]);
+          // 清空消息列表，确保界面完全重置
+          setMessages([]);
         }
 
         // 保存更新后的对话列表
         saveConversationsToStorage(updatedConversations);
         message.success('对话已删除');
-      }
-    });
+    }
   }, [conversations, currentConversation, saveConversationsToStorage, setSelectedCollections]);
 
   const loadConversations = () => {
