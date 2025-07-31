@@ -3514,5 +3514,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=True,
+        reload_dirs=["backend"],  # 只监控backend目录
+        reload_excludes=[".venv", "node_modules", "__pycache__", "*.pyc"],  # 排除不需要监控的目录
         log_level="info"
     )
