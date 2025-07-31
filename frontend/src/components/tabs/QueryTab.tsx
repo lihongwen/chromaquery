@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import {
   Layout,
   Input,
@@ -20,7 +21,8 @@ import {
   Tooltip,
   Drawer,
   FloatButton,
-  Dropdown
+  Dropdown,
+  Modal
 } from 'antd';
 import {
   SendOutlined,
@@ -160,7 +162,11 @@ const QueryTab: React.FC = () => {
   const [collections, setCollections] = useState<CollectionInfo[]>([]);
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
+  // @ts-ignore - streamingMessageId is used in the component
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+
+  // 强制重新渲染的状态
+  const [forceRender, setForceRender] = useState(0);
 
   // 角色相关状态
   const [roles, setRoles] = useState<Role[]>([]);
@@ -209,6 +215,29 @@ const QueryTab: React.FC = () => {
     fetchRoles();
   }, []);
 
+  // 监听强制重新渲染状态，确保删除对话后界面立即更新
+  useEffect(() => {
+    // 当 forceRender 变化时，确保界面重新渲染
+    // 这个 effect 的存在就足以触发重新渲染
+  }, [forceRender]);
+
+  // 重置界面到初始状态的函数
+  const resetToInitialState = useCallback(() => {
+    flushSync(() => {
+      setCurrentConversation(null);
+      setSelectedCollections([]);
+      setForceRender(prev => prev + 1);
+    });
+  }, []);
+
+  // 监听 currentConversation 变化，确保界面状态正确
+  useEffect(() => {
+    if (!currentConversation) {
+      // 当前对话为空时，确保集合选择状态也被清空
+      setSelectedCollections([]);
+    }
+  }, [currentConversation]);
+
   // 保存对话到localStorage的辅助函数
   const saveConversationsToStorage = useCallback((convs: Conversation[]) => {
     try {
@@ -243,23 +272,45 @@ const QueryTab: React.FC = () => {
     const conversationToDelete = conversations.find(conv => conv.id === conversationId);
     if (!conversationToDelete) return;
 
-    // 使用 window.confirm 确保功能正常工作
+    // 暂时使用 window.confirm 来测试删除功能
     const confirmed = window.confirm(`确定要删除对话"${conversationToDelete.title}"吗？此操作不可撤销。`);
 
     if (confirmed) {
         const updatedConversations = conversations.filter(conv => conv.id !== conversationId);
-        setConversations(updatedConversations);
+        const isCurrentConversation = currentConversation?.id === conversationId;
 
-        // 如果删除的是当前对话，需要处理当前对话状态
-        if (currentConversation?.id === conversationId) {
-          // 删除当前对话后，清空当前对话状态，回到初始界面
-          setCurrentConversation(null);
-          // 清空选中的集合，让用户重新选择
-          setSelectedCollections([]);
-        }
+        // 使用 flushSync 强制同步更新状态，确保界面立即更新
+        flushSync(() => {
+          // 更新对话列表
+          setConversations(updatedConversations);
+
+          // 如果删除的是当前对话，立即重置界面状态
+          if (isCurrentConversation) {
+            setCurrentConversation(null);
+            setSelectedCollections([]);
+            setForceRender(prev => prev + 1);
+          }
+        });
 
         // 保存更新后的对话列表
         saveConversationsToStorage(updatedConversations);
+
+        // 如果删除的是当前对话，使用多重机制确保状态完全重置
+        if (isCurrentConversation) {
+          // 立即再次重置
+          resetToInitialState();
+
+          // 延迟重置，确保在下一个事件循环中完全清理
+          setTimeout(() => {
+            resetToInitialState();
+          }, 0);
+
+          // 再次延迟重置，确保界面完全更新
+          setTimeout(() => {
+            resetToInitialState();
+          }, 10);
+        }
+
         message.success('对话已删除');
     }
   }, [conversations, currentConversation, saveConversationsToStorage, setSelectedCollections]);

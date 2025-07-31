@@ -177,8 +177,8 @@ const CollectionsTab: React.FC = () => {
   const loadEmbeddingConfig = async () => {
     try {
       const response = await fetch('/api/embedding-config');
-      const data = await response.json();
-      setEmbeddingConfig(data.full_config || {});
+      await response.json();
+      // 配置已加载，但不需要存储到状态中
     } catch (error) {
       console.error('加载模型配置失败:', error);
       message.error('加载模型配置失败');

@@ -726,7 +726,7 @@ const SettingsTab: React.FC = () => {
                   type="text"
                   size="small"
                   icon={apiKeyVisible['embedding-alibaba'] ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                  onClick={() => toggleApiKeyVisibility('embedding-alibaba', apiKeyVisible, setApiKeyVisible)}
+                  onClick={() => toggleApiKeyVisibility('embedding-alibaba', setApiKeyVisible)}
                 />
               }
             />
@@ -1056,7 +1056,7 @@ const SettingsTab: React.FC = () => {
                       type="text"
                       size="small"
                       icon={apiKeyVisible['llm-alibaba'] ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                      onClick={() => toggleApiKeyVisibility('llm-alibaba', apiKeyVisible, setApiKeyVisible)}
+                      onClick={() => toggleApiKeyVisibility('llm-alibaba', setApiKeyVisible)}
                     />
                   }
                 />
@@ -1144,7 +1144,7 @@ const SettingsTab: React.FC = () => {
                       type="text"
                       size="small"
                       icon={apiKeyVisible['llm-deepseek'] ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                      onClick={() => toggleApiKeyVisibility('llm-deepseek', apiKeyVisible, setApiKeyVisible)}
+                      onClick={() => toggleApiKeyVisibility('llm-deepseek', setApiKeyVisible)}
                     />
                   }
                 />
