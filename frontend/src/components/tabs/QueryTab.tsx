@@ -21,8 +21,7 @@ import {
   Tooltip,
   Drawer,
   FloatButton,
-  Dropdown,
-  Modal
+  Dropdown
 } from 'antd';
 import {
   SendOutlined,
@@ -709,6 +708,114 @@ const QueryTab: React.FC = () => {
   // 展开状态下的侧边栏内容
   const expandedSiderContent = (
     <div style={{ padding: 16 }}>
+      {/* 查询设置 - 移动到顶部 */}
+      <Collapse size="small" ghost defaultActiveKey={['settings']} style={{ marginBottom: 16 }}>
+        <Panel header="⚙️ 查询设置" key="settings">
+          <Form layout="vertical" size="small">
+            {/* 角色选择 - 集成到查询设置中 */}
+            <Form.Item label="AI角色">
+              <Select
+                placeholder="选择AI角色（可选）"
+                value={selectedRoleId}
+                onChange={setSelectedRoleId}
+                allowClear
+                style={{ width: '100%' }}
+                loading={rolesLoading}
+                options={roles.map(role => ({
+                  value: role.id,
+                  label: (
+                    <div>
+                      <span style={{ fontWeight: 500 }}>{role.name}</span>
+                      {role.description && (
+                        <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
+                          {role.description}
+                        </div>
+                      )}
+                    </div>
+                  )
+                }))}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="相似度阈值"
+              tooltip="设置文档相关性的最低要求。值越高，返回的文档越相关但数量可能较少；值越低，返回更多文档但相关性可能较低。"
+            >
+              <Slider
+                min={0}
+                max={1}
+                step={0.1}
+                value={settings.similarity_threshold}
+                onChange={(value) => {
+                  if (typeof value === 'number' && value !== settings.similarity_threshold) {
+                    setSettings(prev => ({ ...prev, similarity_threshold: value }));
+                  }
+                }}
+                tooltip={{ formatter: (value) => `相关性: ${(value! * 100).toFixed(0)}%` }}
+                marks={{
+                  0: '宽松',
+                  0.5: '适中',
+                  1: '严格'
+                }}
+              />
+            </Form.Item>
+
+            <Form.Item label="返回结果数">
+              <InputNumber
+                min={1}
+                max={100}
+                value={settings.n_results}
+                onChange={(value) => {
+                  const newValue = value || 10;
+                  if (newValue !== settings.n_results) {
+                    setSettings(prev => ({ ...prev, n_results: newValue }));
+                  }
+                }}
+                style={{ width: '100%' }}
+              />
+            </Form.Item>
+
+            <Form.Item label="最大输出长度">
+              <InputNumber
+                min={100}
+                max={8000}
+                step={100}
+                value={settings.max_tokens}
+                onChange={(value) => {
+                  const newValue = value || 4000;
+                  if (newValue !== settings.max_tokens) {
+                    setSettings(prev => ({ ...prev, max_tokens: newValue }));
+                  }
+                }}
+                style={{ width: '100%' }}
+                formatter={(value) => `${value} tokens`}
+                parser={(value) => value?.replace(' tokens', '') as any}
+              />
+            </Form.Item>
+
+            <Form.Item label="创造性">
+              <Slider
+                min={0}
+                max={1}
+                step={0.1}
+                value={settings.temperature}
+                onChange={(value) => {
+                  if (value !== settings.temperature) {
+                    setSettings(prev => ({ ...prev, temperature: value }));
+                  }
+                }}
+                marks={{
+                  0: '保守',
+                  0.3: '平衡',
+                  0.7: '创新',
+                  1: '随机'
+                }}
+              />
+            </Form.Item>
+          </Form>
+        </Panel>
+      </Collapse>
+
       {/* 新建对话按钮 */}
       <Button
         type="primary"
@@ -880,88 +987,6 @@ const QueryTab: React.FC = () => {
           }}
         />
       </div>
-
-      <Collapse size="small" ghost>
-        <Panel header="⚙️ 查询设置" key="settings">
-          <Form layout="vertical" size="small">
-            <Form.Item
-              label="相似度阈值"
-              tooltip="设置文档相关性的最低要求。值越高，返回的文档越相关但数量可能较少；值越低，返回更多文档但相关性可能较低。"
-            >
-              <Slider
-                min={0}
-                max={1}
-                step={0.1}
-                value={settings.similarity_threshold}
-                onChange={(value) => {
-                  if (typeof value === 'number' && value !== settings.similarity_threshold) {
-                    setSettings(prev => ({ ...prev, similarity_threshold: value }));
-                  }
-                }}
-                tooltip={{ formatter: (value) => `相关性: ${(value! * 100).toFixed(0)}%` }}
-                marks={{
-                  0: '宽松',
-                  0.5: '适中',
-                  1: '严格'
-                }}
-              />
-            </Form.Item>
-
-            <Form.Item label="返回结果数">
-              <InputNumber
-                min={1}
-                max={100}
-                value={settings.n_results}
-                onChange={(value) => {
-                  const newValue = value || 10;
-                  if (newValue !== settings.n_results) {
-                    setSettings(prev => ({ ...prev, n_results: newValue }));
-                  }
-                }}
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-
-            <Form.Item label="最大输出长度">
-              <InputNumber
-                min={100}
-                max={8000}
-                step={100}
-                value={settings.max_tokens}
-                onChange={(value) => {
-                  const newValue = value || 4000;
-                  if (newValue !== settings.max_tokens) {
-                    setSettings(prev => ({ ...prev, max_tokens: newValue }));
-                  }
-                }}
-                style={{ width: '100%' }}
-                formatter={(value) => `${value} tokens`}
-                parser={(value) => value?.replace(' tokens', '') as any}
-              />
-            </Form.Item>
-
-            <Form.Item label="创造性">
-              <Slider
-                min={0}
-                max={1}
-                step={0.1}
-                value={settings.temperature}
-                onChange={(value) => {
-                  if (value !== settings.temperature) {
-                    setSettings(prev => ({ ...prev, temperature: value }));
-                  }
-                }}
-                marks={{
-                  0: '保守',
-                  0.3: '平衡',
-                  0.7: '创新',
-                  1: '随机'
-                }}
-              />
-            </Form.Item>
-          </Form>
-        </Panel>
-      </Collapse>
     </div>
   );
 
@@ -1352,31 +1377,6 @@ const QueryTab: React.FC = () => {
                 style={{ marginBottom: 12 }}
               />
             )}
-
-            {/* 角色选择器 */}
-            <div style={{ marginBottom: 12 }}>
-              <Select
-                placeholder="选择AI角色（可选）"
-                value={selectedRoleId}
-                onChange={setSelectedRoleId}
-                allowClear
-                style={{ width: '100%' }}
-                loading={rolesLoading}
-                options={roles.map(role => ({
-                  value: role.id,
-                  label: (
-                    <div>
-                      <span style={{ fontWeight: 500 }}>{role.name}</span>
-                      {role.description && (
-                        <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
-                          {role.description}
-                        </div>
-                      )}
-                    </div>
-                  )
-                }))}
-              />
-            </div>
 
             <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
               {/* +号按钮 */}
