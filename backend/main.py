@@ -41,6 +41,7 @@ from file_parsers import file_parser_manager, FileFormat
 from config_manager import config_manager
 from platform_utils import platform_utils
 from role_manager import role_manager, Role, CreateRoleRequest, UpdateRoleRequest
+from consistency_api import include_consistency_routes
 
 # 延迟导入有问题的模块，避免启动时冲突
 def get_rag_chunker():
@@ -115,7 +116,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+# 注册一致性管理路由
+include_consistency_routes(app)
 
 def init_chroma_client():
     """初始化ChromaDB客户端"""
@@ -775,30 +777,30 @@ async def create_collection(request: CreateCollectionRequest):
 
 @app.delete("/api/collections/{collection_name}")
 async def delete_collection(collection_name: str):
-    """删除集合"""
+    """删除集合（使用事务性操作）"""
     try:
-        # 查找要删除的集合
-        collections = chroma_client.list_collections()
-        target_collection = None
+        from simple_delete_operations import get_simple_delete_operations
 
-        for collection in collections:
-            metadata = collection.metadata or {}
-            # 支持通过原始名称或编码名称删除
-            if (metadata.get('original_name') == collection_name or
-                collection.name == collection_name):
-                target_collection = collection
-                break
+        # 使用简化的删除操作
+        delete_ops = get_simple_delete_operations(
+            chroma_path=platform_utils.get_chroma_data_directory(),
+            client=chroma_client
+        )
 
-        if not target_collection:
-            raise HTTPException(status_code=404, detail=f"集合 '{collection_name}' 不存在")
+        # 执行安全删除
+        result = delete_ops.safe_delete_collection(collection_name)
 
-        # 获取显示名称用于返回消息
-        display_name = target_collection.metadata.get('original_name', target_collection.name)
+        if result["success"]:
+            logger.info(f"集合删除成功: {collection_name}")
 
-        # 删除集合
-        chroma_client.delete_collection(target_collection.name)
+            return {
+                "message": result["message"],
+                "operation_id": result.get("operation_id", ""),
+                "consistency_verified": result.get("consistency_verified", True)
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result["message"])
 
-        return {"message": f"集合 '{display_name}' 删除成功"}
     except HTTPException:
         raise
     except Exception as e:
@@ -807,7 +809,7 @@ async def delete_collection(collection_name: str):
 
 @app.put("/api/collections/rename")
 async def rename_collection(request: RenameCollectionRequest):
-    """重命名集合"""
+    """重命名集合（使用事务性操作）"""
     try:
         # 验证输入参数
         if not request.old_name or not request.old_name.strip():
@@ -817,28 +819,88 @@ async def rename_collection(request: RenameCollectionRequest):
         if request.old_name.strip() == request.new_name.strip():
             raise HTTPException(status_code=400, detail="新名称与原名称相同")
 
-        # 查找要重命名的集合
-        collections = chroma_client.list_collections()
-        old_collection = None
+        logger.info(f"收到重命名请求: {request.old_name} -> {request.new_name}")
 
-        for collection in collections:
-            metadata = collection.metadata or {}
-            if metadata.get('original_name') == request.old_name:
-                old_collection = collection
-                break
+        from async_rename_manager import get_async_rename_manager
 
-        if not old_collection:
-            raise HTTPException(status_code=404, detail=f"集合 '{request.old_name}' 不存在")
+        # 使用异步重命名管理器
+        async_rename_manager = get_async_rename_manager(
+            chroma_path=platform_utils.get_chroma_data_directory(),
+            client=chroma_client
+        )
 
-        # 检查新名称是否已存在
-        for collection in collections:
-            metadata = collection.metadata or {}
-            if metadata.get('original_name') == request.new_name:
-                raise HTTPException(status_code=400, detail=f"集合 '{request.new_name}' 已存在")
+        # 执行快速重命名（立即响应）
+        result = async_rename_manager.quick_rename(request.old_name, request.new_name)
 
-        logger.info(f"开始重命名集合: '{request.old_name}' -> '{request.new_name}'")
+        if result["success"]:
+            logger.info(f"集合快速重命名成功: {request.old_name} -> {request.new_name}")
 
-        # 编码新名称
+            return {
+                "message": result["message"],
+                "task_id": result.get("task_id", ""),
+                "immediate_response": result.get("immediate_response", True),
+                "background_processing": result.get("background_processing", True),
+                "old_name": request.old_name,
+                "new_name": request.new_name
+            }
+        else:
+            logger.error(f"重命名失败: {result['message']}")
+            raise HTTPException(status_code=400, detail=result["message"])
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"重命名集合异常: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"重命名集合失败: {str(e)}")
+
+@app.get("/api/collections/rename/status/{task_id}")
+async def get_rename_status(task_id: str):
+    """获取重命名任务状态"""
+    try:
+        from async_rename_manager import get_async_rename_manager
+
+        async_rename_manager = get_async_rename_manager(
+            chroma_path=platform_utils.get_chroma_data_directory(),
+            client=chroma_client
+        )
+
+        status = async_rename_manager.get_task_status(task_id)
+
+        if status:
+            return {
+                "success": True,
+                "task": status
+            }
+        else:
+            raise HTTPException(status_code=404, detail="任务不存在或已完成")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取重命名状态失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取状态失败: {str(e)}")
+
+@app.get("/api/collections/rename/tasks")
+async def get_all_rename_tasks():
+    """获取所有重命名任务"""
+    try:
+        from async_rename_manager import get_async_rename_manager
+
+        async_rename_manager = get_async_rename_manager(
+            chroma_path=platform_utils.get_chroma_data_directory(),
+            client=chroma_client
+        )
+
+        tasks = async_rename_manager.get_all_tasks()
+
+        return {
+            "success": True,
+            "tasks": tasks
+        }
+
+    except Exception as e:
+        logger.error(f"获取重命名任务列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取任务列表失败: {str(e)}")
         new_encoded = encode_collection_name(request.new_name)
 
         # 准备新的元数据
