@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass, asdict
 from enum import Enum
+from concurrent.futures import ThreadPoolExecutor
 import chromadb
 from chromadb.errors import NotFoundError
 
@@ -52,7 +53,7 @@ class AsyncRenameManager:
         self.task_lock = threading.Lock()
         
         # 后台任务执行器
-        self.executor = threading.ThreadPoolExecutor(max_workers=2, thread_name_prefix="rename")
+        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rename")
         
         # 进度回调
         self.progress_callbacks: List[Callable] = []
