@@ -122,19 +122,13 @@ class AsyncRenameManager:
                     if (task.old_name == old_name or task.new_name == new_name) and task.status == CollectionStatus.RENAMING:
                         return {"success": False, "message": "该集合正在重命名中，请稍后再试"}
             
-            # 5. 立即更新集合的显示名称（快速响应）
+            # 5. 创建重命名任务（快速响应，不修改原集合）
             task_id = f"rename_{int(time.time() * 1000)}"
             new_collection_id = self.encode_collection_name(new_name)
-            
-            # 更新元数据中的显示名称
-            updated_metadata = old_collection.metadata.copy() if old_collection.metadata else {}
-            updated_metadata['original_name'] = new_name
-            updated_metadata['updated_at'] = datetime.now().isoformat()
-            updated_metadata['rename_status'] = 'renaming'
-            updated_metadata['rename_task_id'] = task_id
-            
-            # 使用ChromaDB的modify方法更新元数据
-            old_collection.modify(metadata=updated_metadata)
+
+            # 注意：由于ChromaDB的限制，我们不能安全地修改集合元数据
+            # 因此我们跳过快速元数据更新，直接进行后台重命名
+            logger.info(f"创建重命名任务，跳过元数据快速更新: {task_id}")
             
             # 6. 创建重命名任务
             task = RenameTask(
@@ -160,12 +154,13 @@ class AsyncRenameManager:
             
             return {
                 "success": True,
-                "message": f"集合已重命名为 '{new_name}'，正在后台优化数据结构...",
+                "message": f"重命名任务已启动，正在后台将 '{old_name}' 重命名为 '{new_name}'...",
                 "task_id": task_id,
                 "old_name": old_name,
                 "new_name": new_name,
                 "immediate_response": True,
-                "background_processing": True
+                "background_processing": True,
+                "note": "由于ChromaDB限制，重命名将在后台完成，请稍候..."
             }
             
         except Exception as e:
@@ -192,13 +187,15 @@ class AsyncRenameManager:
             
             self.notify_progress(task.task_id, 40, "正在创建新的数据结构...")
             
-            # 创建新集合
+            # 创建新集合，保持原有配置
             new_metadata = backup_metadata.copy() if backup_metadata else {}
             new_metadata['original_name'] = task.new_name
             new_metadata['updated_at'] = datetime.now().isoformat()
             new_metadata.pop('rename_status', None)
             new_metadata.pop('rename_task_id', None)
-            
+
+            # 简化创建过程，让ChromaDB使用默认配置
+            # 如果原集合有特殊配置，新集合会在数据复制时继承
             new_collection = self.client.create_collection(
                 name=task.new_collection_id,
                 metadata=new_metadata
