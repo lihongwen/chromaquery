@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   Progress,
@@ -7,13 +7,18 @@ import {
   Alert,
   Button,
   Spin,
-  Tag
+  Tag,
+  Statistic,
+  Row,
+  Col
 } from 'antd';
 import {
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   LoadingOutlined,
-  CloseOutlined
+  CloseOutlined,
+  ClockCircleOutlined,
+  DatabaseOutlined
 } from '@ant-design/icons';
 import apiClient from '../config/api';
 
@@ -31,11 +36,24 @@ interface RenameTask {
   error_message?: string;
 }
 
+interface CollectionAnalysis {
+  collection_name: string;
+  display_name: string;
+  document_count: number;
+  estimated_size_mb: number;
+  estimated_processing_time_seconds: number;
+  vector_dimension: number;
+  should_show_progress: boolean;
+  complexity_level: string;
+  progress_message: string;
+}
+
 interface AsyncRenameProgressProps {
   taskId: string;
   oldName: string;
   newName: string;
   visible: boolean;
+  analysis?: CollectionAnalysis;
   onClose: () => void;
   onComplete: () => void;
 }
@@ -45,12 +63,16 @@ const AsyncRenameProgress: React.FC<AsyncRenameProgressProps> = ({
   oldName,
   newName,
   visible,
+  analysis,
   onClose,
   onComplete
 }) => {
   const [task, setTask] = useState<RenameTask | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [estimatedRemaining, setEstimatedRemaining] = useState<number>(0);
+  const [startTime, setStartTime] = useState<number>(Date.now());
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (visible && taskId) {

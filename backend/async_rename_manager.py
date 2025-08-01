@@ -47,16 +47,29 @@ class AsyncRenameManager:
         self.chroma_path = chroma_path
         self.client = client
         self.db_path = chroma_path / "chroma.sqlite3"
-        
+
         # 任务管理
         self.active_tasks: Dict[str, RenameTask] = {}
         self.task_lock = threading.Lock()
-        
+
         # 后台任务执行器
         self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rename")
-        
+
         # 进度回调
         self.progress_callbacks: List[Callable] = []
+
+        # WebSocket管理器
+        self.websocket_manager = None
+        self._setup_websocket_manager()
+
+    def _setup_websocket_manager(self):
+        """设置WebSocket管理器"""
+        try:
+            from websocket_manager import get_websocket_manager
+            self.websocket_manager = get_websocket_manager()
+            logger.info("WebSocket管理器已连接")
+        except Exception as e:
+            logger.warning(f"WebSocket管理器连接失败: {e}")
     
     def encode_collection_name(self, chinese_name: str) -> str:
         """将中文集合名称编码为ChromaDB兼容的名称"""
@@ -69,14 +82,25 @@ class AsyncRenameManager:
         """注册进度回调函数"""
         self.progress_callbacks.append(callback)
     
-    def notify_progress(self, task_id: str, progress: int, message: str):
+    def notify_progress(self, task_id: str, progress: int, message: str, estimated_remaining: int = 0):
         """通知进度更新"""
         with self.task_lock:
             if task_id in self.active_tasks:
-                self.active_tasks[task_id].progress = progress
-                self.active_tasks[task_id].message = message
-                self.active_tasks[task_id].updated_at = datetime.now().isoformat()
-        
+                task = self.active_tasks[task_id]
+                task.progress = progress
+                task.message = message
+                task.updated_at = datetime.now().isoformat()
+
+                # 通过WebSocket通知前端
+                if self.websocket_manager:
+                    self.websocket_manager.notify_rename_progress(
+                        task_id=task_id,
+                        progress=progress,
+                        message=message,
+                        collection_name=task.new_name,
+                        estimated_remaining=estimated_remaining
+                    )
+
         # 通知所有回调
         for callback in self.progress_callbacks:
             try:
@@ -222,15 +246,13 @@ class AsyncRenameManager:
                 raise Exception(f"数据迁移不完整: 原{old_count}条，新{new_count}条")
             
             self.notify_progress(task.task_id, 90, "正在清理旧数据...")
-            
-            # 删除旧集合
-            self.client.delete_collection(task.old_collection_id)
-            
-            # 清理向量文件
-            old_vector_dir = self.chroma_path / task.old_collection_id
-            if old_vector_dir.exists():
-                import shutil
-                shutil.rmtree(old_vector_dir)
+
+            # 强制清理旧数据（确保不留残留）
+            cleanup_success = self._force_cleanup_old_data(task.old_collection_id, task.task_id)
+
+            if not cleanup_success:
+                logger.warning(f"旧数据清理可能不完整: {task.old_collection_id}")
+                # 即使清理不完整，也继续完成重命名，但记录警告
             
             # 完成任务
             with self.task_lock:
@@ -239,11 +261,21 @@ class AsyncRenameManager:
                     self.active_tasks[task.task_id].progress = 100
                     self.active_tasks[task.task_id].message = "重命名完成"
                     self.active_tasks[task.task_id].updated_at = datetime.now().isoformat()
-            
+
             self.notify_progress(task.task_id, 100, "重命名完成")
-            
+
+            # 通知WebSocket重命名完成
+            if self.websocket_manager:
+                self.websocket_manager.notify_rename_completed(
+                    task_id=task.task_id,
+                    old_name=task.old_name,
+                    new_name=task.new_name
+                )
+                # 通知集合列表更新
+                self.websocket_manager.notify_collection_list_update()
+
             logger.info(f"后台重命名任务完成: {task.task_id}")
-            
+
             # 5分钟后清理任务记录
             threading.Timer(300, self._cleanup_task, args=[task.task_id]).start()
             
@@ -257,9 +289,17 @@ class AsyncRenameManager:
                     self.active_tasks[task.task_id].error_message = str(e)
                     self.active_tasks[task.task_id].message = f"重命名失败: {str(e)}"
                     self.active_tasks[task.task_id].updated_at = datetime.now().isoformat()
-            
+
             self.notify_progress(task.task_id, -1, f"重命名失败: {str(e)}")
-            
+
+            # 通知WebSocket重命名失败
+            if self.websocket_manager:
+                self.websocket_manager.notify_rename_failed(
+                    task_id=task.task_id,
+                    old_name=task.old_name,
+                    error_message=str(e)
+                )
+
             # 尝试恢复原状态
             self._attempt_rollback(task)
     
@@ -289,6 +329,121 @@ class AsyncRenameManager:
         except Exception as e:
             logger.error(f"回滚过程出错: {e}")
     
+    def _force_cleanup_old_data(self, old_collection_id: str, task_id: str) -> bool:
+        """强制清理旧数据，确保不留残留"""
+        cleanup_success = True
+
+        try:
+            # 1. 删除ChromaDB集合（多次尝试）
+            for attempt in range(3):  # 最多尝试3次
+                try:
+                    self.client.delete_collection(old_collection_id)
+                    logger.info(f"成功删除ChromaDB集合: {old_collection_id}")
+                    break
+                except NotFoundError:
+                    # 集合已不存在，这是好事
+                    logger.info(f"ChromaDB集合已不存在: {old_collection_id}")
+                    break
+                except Exception as e:
+                    logger.warning(f"删除ChromaDB集合失败 (尝试 {attempt + 1}/3): {e}")
+                    if attempt == 2:  # 最后一次尝试
+                        cleanup_success = False
+                    else:
+                        time.sleep(1)  # 等待1秒后重试
+
+            # 2. 清理向量文件目录（多次尝试）
+            old_vector_dir = self.chroma_path / old_collection_id
+            if old_vector_dir.exists():
+                for attempt in range(3):
+                    try:
+                        import shutil
+                        shutil.rmtree(old_vector_dir)
+                        logger.info(f"成功删除向量文件目录: {old_vector_dir}")
+                        break
+                    except Exception as e:
+                        logger.warning(f"删除向量文件目录失败 (尝试 {attempt + 1}/3): {e}")
+                        if attempt == 2:
+                            cleanup_success = False
+                        else:
+                            time.sleep(1)
+
+            # 3. 清理数据库记录（如果存在）
+            try:
+                if self.db_path.exists():
+                    import sqlite3
+                    with sqlite3.connect(str(self.db_path)) as conn:
+                        cursor = conn.cursor()
+
+                        # 删除相关记录
+                        cursor.execute("DELETE FROM collections WHERE id = ?", (old_collection_id,))
+                        cursor.execute("DELETE FROM collection_metadata WHERE collection_id = ?", (old_collection_id,))
+                        cursor.execute("DELETE FROM segments WHERE collection = ?", (old_collection_id,))
+
+                        conn.commit()
+                        logger.info(f"清理数据库记录: {old_collection_id}")
+            except Exception as e:
+                logger.warning(f"清理数据库记录失败: {e}")
+                cleanup_success = False
+
+            # 4. 验证清理结果
+            verification_success = self._verify_cleanup(old_collection_id)
+            if not verification_success:
+                logger.error(f"清理验证失败: {old_collection_id}")
+                cleanup_success = False
+
+            return cleanup_success
+
+        except Exception as e:
+            logger.error(f"强制清理过程出错: {e}")
+            return False
+
+    def _verify_cleanup(self, old_collection_id: str) -> bool:
+        """验证清理是否完整"""
+        try:
+            issues = []
+
+            # 检查ChromaDB中是否还存在
+            try:
+                self.client.get_collection(old_collection_id)
+                issues.append("ChromaDB中仍存在旧集合")
+            except NotFoundError:
+                pass  # 这是期望的结果
+            except Exception as e:
+                issues.append(f"检查ChromaDB集合时出错: {e}")
+
+            # 检查向量文件目录
+            old_vector_dir = self.chroma_path / old_collection_id
+            if old_vector_dir.exists():
+                issues.append("向量文件目录仍存在")
+
+            # 检查数据库记录
+            if self.db_path.exists():
+                try:
+                    import sqlite3
+                    with sqlite3.connect(str(self.db_path)) as conn:
+                        cursor = conn.cursor()
+
+                        cursor.execute("SELECT COUNT(*) FROM collections WHERE id = ?", (old_collection_id,))
+                        if cursor.fetchone()[0] > 0:
+                            issues.append("数据库中仍存在集合记录")
+
+                        cursor.execute("SELECT COUNT(*) FROM collection_metadata WHERE collection_id = ?", (old_collection_id,))
+                        if cursor.fetchone()[0] > 0:
+                            issues.append("数据库中仍存在元数据记录")
+                except Exception as e:
+                    issues.append(f"检查数据库记录时出错: {e}")
+
+            if issues:
+                logger.warning(f"清理验证发现问题: {issues}")
+                return False
+
+            logger.info(f"清理验证通过: {old_collection_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"清理验证过程出错: {e}")
+            return False
+
     def _cleanup_task(self, task_id: str):
         """清理任务记录"""
         with self.task_lock:

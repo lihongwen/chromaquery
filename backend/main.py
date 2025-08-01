@@ -4,7 +4,7 @@ ChromaDB Web Manager - 后端主应用
 支持中文集合名称的ChromaDB Web管理界面
 """
 
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
@@ -901,6 +901,131 @@ async def get_all_rename_tasks():
     except Exception as e:
         logger.error(f"获取重命名任务列表失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取任务列表失败: {str(e)}")
+
+@app.get("/api/collections/{collection_name}/analysis")
+async def analyze_collection(collection_name: str):
+    """分析集合大小和复杂度"""
+    try:
+        from collection_analyzer import get_collection_analyzer
+
+        analyzer = get_collection_analyzer(
+            chroma_path=platform_utils.get_chroma_data_directory(),
+            client=chroma_client
+        )
+
+        analysis = analyzer.analyze_collection(collection_name)
+
+        if analysis:
+            return {
+                "success": True,
+                "analysis": {
+                    "collection_name": analysis.collection_name,
+                    "display_name": analysis.display_name,
+                    "document_count": analysis.document_count,
+                    "estimated_size_mb": analysis.estimated_size_mb,
+                    "estimated_processing_time_seconds": analysis.estimated_processing_time_seconds,
+                    "vector_dimension": analysis.vector_dimension,
+                    "should_show_progress": analysis.should_show_progress,
+                    "complexity_level": analysis.complexity_level,
+                    "progress_message": analyzer.get_progress_message(
+                        analysis.complexity_level, analysis.document_count
+                    )
+                }
+            }
+        else:
+            raise HTTPException(status_code=404, detail="集合不存在或分析失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"分析集合失败: {e}")
+        raise HTTPException(status_code=500, detail=f"分析集合失败: {str(e)}")
+
+@app.websocket("/api/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket端点，用于实时通信"""
+    from websocket_manager import get_websocket_manager
+
+    manager = get_websocket_manager()
+    await manager.connect(websocket)
+
+    try:
+        while True:
+            # 保持连接活跃，接收客户端心跳
+            data = await websocket.receive_text()
+
+            # 可以处理客户端发送的消息
+            if data == "ping":
+                await manager.send_personal_message({"type": "pong"}, websocket)
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+@app.get("/api/data/cleanup/scan")
+async def scan_orphaned_data():
+    """扫描孤立数据"""
+    try:
+        from data_cleanup_tool import get_data_cleanup_tool
+
+        cleanup_tool = get_data_cleanup_tool(
+            chroma_path=platform_utils.get_chroma_data_directory(),
+            client=chroma_client
+        )
+
+        analysis = cleanup_tool.scan_for_orphaned_data()
+
+        return {
+            "success": True,
+            "analysis": analysis
+        }
+
+    except Exception as e:
+        logger.error(f"扫描孤立数据失败: {e}")
+        raise HTTPException(status_code=500, detail=f"扫描失败: {str(e)}")
+
+@app.post("/api/data/cleanup/execute")
+async def cleanup_orphaned_data(dry_run: bool = True):
+    """清理孤立数据"""
+    try:
+        from data_cleanup_tool import get_data_cleanup_tool
+
+        cleanup_tool = get_data_cleanup_tool(
+            chroma_path=platform_utils.get_chroma_data_directory(),
+            client=chroma_client
+        )
+
+        result = cleanup_tool.cleanup_orphaned_data(dry_run=dry_run)
+
+        return {
+            "success": True,
+            "result": result
+        }
+
+    except Exception as e:
+        logger.error(f"清理孤立数据失败: {e}")
+        raise HTTPException(status_code=500, detail=f"清理失败: {str(e)}")
+
+@app.get("/api/data/cleanup/report")
+async def get_cleanup_report():
+    """获取数据清理报告"""
+    try:
+        from data_cleanup_tool import get_data_cleanup_tool
+
+        cleanup_tool = get_data_cleanup_tool(
+            chroma_path=platform_utils.get_chroma_data_directory(),
+            client=chroma_client
+        )
+
+        report = cleanup_tool.get_cleanup_report()
+
+        return {
+            "success": True,
+            "report": report
+        }
+
+    except Exception as e:
+        logger.error(f"获取清理报告失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取报告失败: {str(e)}")
         new_encoded = encode_collection_name(request.new_name)
 
         # 准备新的元数据
