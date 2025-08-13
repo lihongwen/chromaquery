@@ -1,0 +1,40 @@
+{
+  "pending_cleanup": [],
+  "completed_cleanup": [
+    {
+      "segment_id": "36e0b288-64ad-4dca-94df-2bd6b106aff2",
+      "collection_id": "col_b515afa02a70452a2264c97896735a63",
+      "collection_name": "测试中文集合删除",
+      "created_time": "2025-08-13 17:46:28",
+      "file_size": "40.4MB",
+      "attempts": 1,
+      "last_attempt": "2025-08-13 17:46:50",
+      "cleanup_time": "2025-08-13 17:46:50",
+      "cleanup_status": "成功"
+    },
+    {
+      "segment_id": "81844d6d-7d4b-4131-9788-2df46ba70b7f",
+      "collection_id": "col_b515afa02a70452a2264c97896735a63",
+      "collection_name": "测试中文集合删除",
+      "created_time": "2025-08-13 17:46:28",
+      "file_size": "40.4MB",
+      "attempts": 1,
+      "last_attempt": "2025-08-13 17:46:50",
+      "cleanup_time": "2025-08-13 17:46:50",
+      "cleanup_status": "成功"
+    },
+    {
+      "segment_id": "fdd04d82-f972-4366-9a57-851bd7b23610",
+      "collection_id": "col_b515afa02a70452a2264c97896735a63",
+      "collection_name": "测试中文集合删除",
+      "created_time": "2025-08-13 17:46:28",
+      "file_size": "16.0MB",
+      "attempts": 2,
+      "last_attempt": "2025-08-13 17:48:26",
+      "last_error": "[WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\\\Users\\\\10623\\\\Documents\\\\augment-projects\\\\chromaquery\\\\chromadbdata\\\\fdd04d82-f972-4366-9a57-851bd7b23610\\\\data_level0.bin'",
+      "cleanup_time": "2025-08-13 17:48:26",
+      "cleanup_status": "成功"
+    }
+  ],
+  "last_startup_cleanup": "2025-08-13 17:48:26"
+}

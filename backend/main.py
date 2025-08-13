@@ -88,6 +88,15 @@ async def lifespan(app: FastAPI):
             logger.warning(f"LLM客户端初始化失败: {e}")
     else:
         logger.warning("LLM客户端模块不可用")
+    
+    # 启动时清理待处理的段文件夹
+    try:
+        from pending_cleanup_manager import init_cleanup_manager
+        cleanup_manager = init_cleanup_manager()
+        cleanup_result = cleanup_manager.startup_cleanup()
+        logger.info(f"启动清理完成: 成功清理 {cleanup_result['cleaned']} 个项目, 失败 {cleanup_result['failed']} 个项目")
+    except Exception as e:
+        logger.error(f"启动清理失败: {e}")
 
     yield
 
@@ -355,7 +364,31 @@ async def health_check():
         logger.error(f"健康检查失败: {e}")
         raise HTTPException(status_code=503, detail="服务不可用")
 
+@app.get("/api/cleanup/status")
+async def get_cleanup_status():
+    """获取清理状态"""
+    try:
+        from pending_cleanup_manager import get_cleanup_manager
+        cleanup_manager = get_cleanup_manager()
+        return cleanup_manager.get_cleanup_status()
+    except Exception as e:
+        logger.error(f"获取清理状态失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取清理状态失败: {str(e)}")
 
+@app.post("/api/cleanup/manual")
+async def manual_cleanup():
+    """手动触发清理"""
+    try:
+        from pending_cleanup_manager import get_cleanup_manager
+        cleanup_manager = get_cleanup_manager()
+        result = cleanup_manager.manual_cleanup()
+        return {
+            "message": "手动清理完成",
+            "result": result
+        }
+    except Exception as e:
+        logger.error(f"手动清理失败: {e}")
+        raise HTTPException(status_code=500, detail=f"手动清理失败: {str(e)}")
 
 
 
